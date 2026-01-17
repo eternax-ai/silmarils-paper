@@ -13,6 +13,8 @@ cargo build --release
 
 ```bash
 cargo run
+# or
+cargo run -- "my-secret-seed" "my-message"
 ```
 
 Or run the release binary:

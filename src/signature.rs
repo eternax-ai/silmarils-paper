@@ -100,7 +100,7 @@ pub fn sign(message: &[u8], private_key: &PrivateKey) -> Signature {
     let sigma_2 = d/b;
     let sigma_3 = key_shares.1.y * d_prime;
     let sigma_4 = epsilon_shares[1].y * d/epsilon;
-    let sigma_5 = d * (key_shares.0.y + epsilon_shares[0].y * hash_fp/epsilon);
+    let sigma_5 = d * (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon);
 
     // verify
     let public_key = derive_public_key(private_key);
@@ -109,10 +109,10 @@ pub fn sign(message: &[u8], private_key: &PrivateKey) -> Signature {
     let v_0 = sigma_1 * sigma_2 - sigma_5;
     let v_1 = sigma_1 * sigma_2 - (public_key + sigma_3) + hash_fp * sigma_4;
 
-    let exp_v_0 = d * ((private_key.k + hash_fp) - (key_shares.0.y + epsilon_shares[0].y * hash_fp/epsilon));
+    let exp_v_0 =  d * ((private_key.k + hash_fp) - (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon));
     let exp_v_1 = d * ((private_key.k + hash_fp) - (key_shares.1.y - epsilon_shares[1].y * hash_fp/epsilon));
 
-    assert_eq!(v_0, exp_v_0, "V_0 does not equal d * ((K + r) - (K_0 + epsilon_0 * r/epsilon))");
+    assert_eq!(v_0, exp_v_0, "V_0 does not equal d * ((K + r) - (K_0 - epsilon_0 * r/epsilon))");
     assert_eq!(v_1, exp_v_1, "V_1 does not equal d * ((K + r) - (K_1 - epsilon_1 * r/epsilon))");
 
     let v_0_share = Share { x: Fr::from(1 as u64), y: v_0 };
