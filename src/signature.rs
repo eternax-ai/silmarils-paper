@@ -145,3 +145,191 @@ pub fn verify(message: &[u8], signature: &Signature, public_key: &PublicKey) -> 
 
     reconstruct(&[v_0_share, v_1_share]) == Fr::ZERO
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_derive_private_key_deterministic() {
+        let seed = "test-seed-123";
+        let key1 = derive_private_key(seed);
+        let key2 = derive_private_key(seed);
+        
+        assert_eq!(key1.k, key2.k, "Private key k should be deterministic");
+        assert_eq!(key1.omega, key2.omega, "Private key omega should be deterministic");
+    }
+
+    #[test]
+    fn test_derive_private_key_different_seeds() {
+        let key1 = derive_private_key("seed1");
+        let key2 = derive_private_key("seed2");
+        
+        assert_ne!(key1.k, key2.k, "Different seeds should produce different k");
+        assert_ne!(key1.omega, key2.omega, "Different seeds should produce different omega");
+    }
+
+    #[test]
+    fn test_derive_private_key_hex_seed() {
+        let hex_seed = "0x1234567890abcdef";
+        let key = derive_private_key(hex_seed);
+        
+        // Should not panic and produce valid keys
+        assert_ne!(key.k, Fr::ZERO);
+        assert_ne!(key.omega, Fr::ZERO);
+    }
+
+    #[test]
+    fn test_derive_public_key_deterministic() {
+        let private_key = derive_private_key("test-seed");
+        let public_key1 = derive_public_key(&private_key);
+        let public_key2 = derive_public_key(&private_key);
+        
+        assert_eq!(public_key1, public_key2, "Public key should be deterministic");
+    }
+
+    #[test]
+    fn test_derive_public_key_different_private_keys() {
+        let key1 = derive_private_key("seed1");
+        let key2 = derive_private_key("seed2");
+        
+        let pub1 = derive_public_key(&key1);
+        let pub2 = derive_public_key(&key2);
+        
+        assert_ne!(pub1, pub2, "Different private keys should produce different public keys");
+    }
+
+    #[test]
+    fn test_sign_deterministic() {
+        let private_key = derive_private_key("test-seed");
+        let message = b"test message";
+        
+        let sig1 = sign(message, &private_key);
+        let sig2 = sign(message, &private_key);
+        
+        assert_eq!(sig1.sigma_1, sig2.sigma_1, "Signatures should be deterministic");
+        assert_eq!(sig1.sigma_2, sig2.sigma_2);
+        assert_eq!(sig1.sigma_3, sig2.sigma_3);
+        assert_eq!(sig1.sigma_4, sig2.sigma_4);
+        assert_eq!(sig1.sigma_5, sig2.sigma_5);
+    }
+
+    #[test]
+    fn test_sign_different_messages() {
+        let private_key = derive_private_key("test-seed");
+        let message1 = b"message 1";
+        let message2 = b"message 2";
+        
+        let sig1 = sign(message1, &private_key);
+        let sig2 = sign(message2, &private_key);
+        
+        assert_ne!(sig1.sigma_1, sig2.sigma_1, "Different messages should produce different signatures");
+    }
+
+    #[test]
+    fn test_sign_different_keys() {
+        let key1 = derive_private_key("seed1");
+        let key2 = derive_private_key("seed2");
+        let message = b"same message";
+        
+        let sig1 = sign(message, &key1);
+        let sig2 = sign(message, &key2);
+        
+        assert_ne!(sig1.sigma_1, sig2.sigma_1, "Different keys should produce different signatures");
+    }
+
+    #[test]
+    fn test_verify_valid_signature() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message = b"test message";
+        
+        let signature = sign(message, &private_key);
+        let is_valid = verify(message, &signature, &public_key);
+        
+        assert!(is_valid, "Valid signature should verify correctly");
+    }
+
+    #[test]
+    fn test_verify_wrong_message() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message = b"original message";
+        let wrong_message = b"wrong message";
+        
+        let signature = sign(message, &private_key);
+        let is_valid = verify(wrong_message, &signature, &public_key);
+        
+        assert!(!is_valid, "Signature for wrong message should be rejected");
+    }
+
+    #[test]
+    fn test_verify_wrong_public_key() {
+        let private_key1 = derive_private_key("seed1");
+        let private_key2 = derive_private_key("seed2");
+        let _public_key1 = derive_public_key(&private_key1);
+        let public_key2 = derive_public_key(&private_key2);
+        let message = b"test message";
+        
+        let signature = sign(message, &private_key1);
+        let is_valid = verify(message, &signature, &public_key2);
+        
+        assert!(!is_valid, "Signature with wrong public key should be rejected");
+    }
+
+    #[test]
+    fn test_verify_tampered_signature() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message = b"test message";
+        
+        let mut signature = sign(message, &private_key);
+        signature.sigma_1 = signature.sigma_1 + Fr::ONE; // Tamper with signature
+        
+        let is_valid = verify(message, &signature, &public_key);
+        
+        assert!(!is_valid, "Tampered signature should be rejected");
+    }
+
+    #[test]
+    fn test_verify_empty_message() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message = b"";
+        
+        let signature = sign(message, &private_key);
+        let is_valid = verify(message, &signature, &public_key);
+        
+        assert!(is_valid, "Empty message should verify correctly");
+    }
+
+    #[test]
+    fn test_verify_long_message() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message = b"This is a very long message that tests if the signature scheme works with longer messages. It should still work correctly.";
+        
+        let signature = sign(message, &private_key);
+        let is_valid = verify(message, &signature, &public_key);
+        
+        assert!(is_valid, "Long message should verify correctly");
+    }
+
+    #[test]
+    fn test_sign_verify_roundtrip() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let messages: Vec<&[u8]> = vec![
+            b"message 1",
+            b"message 2",
+            b"another message",
+            b"",
+        ];
+        
+        for message in messages {
+            let signature = sign(message, &private_key);
+            let is_valid = verify(message, &signature, &public_key);
+            assert!(is_valid, "Roundtrip sign/verify should work for message: {:?}", message);
+        }
+    }
+}
