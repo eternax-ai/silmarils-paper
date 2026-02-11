@@ -1,6 +1,7 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, Field, PrimeField, UniformRand};
 use rand::SeedableRng;
+use rand::rngs::OsRng;
 use rand_chacha::ChaChaRng;
 use sha2::{Digest, Sha256};
 
@@ -75,13 +76,13 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
 }
 
 pub fn sign(message: &[u8], private_key: &PrivateKey) -> Signature {
-    // Create RNG seeded from message hash for deterministic signing
+    // Hash message for r (QROM security)
     let mut hasher = Sha256::new();
     hasher.update(message);
     let hash = hasher.finalize();
     let hash_fp: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
     
-    let mut rng = ChaChaRng::from_seed(hash.into());
+    let mut rng = OsRng;
 
     let key_shares = derive_private_key_shares(private_key);
     
@@ -92,7 +93,8 @@ pub fn sign(message: &[u8], private_key: &PrivateKey) -> Signature {
     let d_prime = Fr::rand(&mut rng);
 
     let epsilon = alpha * beta;
-    let epsilon_shares = split(epsilon, 2, 2, &mut rng);
+    let mut rng_epsilon = OsRng;
+    let epsilon_shares = split(epsilon, 2, 2, &mut rng_epsilon);
 
     let d = d_prime + private_key.omega;
     
