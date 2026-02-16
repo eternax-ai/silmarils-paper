@@ -68,7 +68,7 @@ fn main() {
         sig.sigma_1, sig.sigma_2, sig.sigma_3, sig.sigma_4, sig.sigma_5
     );
     println!("Designated-verifier check: {}", is_valid);
-    println!("Invalid for wrong message [1,2,3]: {}", is_forged);
+    println!("Invalid for wrong message [1,2,3] (should fail): {}", is_forged);
 
     // Demonstrate receipt-based (transferable) verification
     let receipt = compute_receipt(message_input.as_bytes(), &channel_key);
