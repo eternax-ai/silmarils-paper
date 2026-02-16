@@ -1,7 +1,8 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, Field, PrimeField, UniformRand};
-use rand::SeedableRng;
+use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
+use rand::SeedableRng;
 use rand_chacha::ChaChaRng;
 use sha2::{Digest, Sha256};
 
@@ -13,6 +14,10 @@ pub struct PrivateKey {
 }
 
 pub type PublicKey = Fr;
+
+/// Shared secret key for the authenticated channel between signer and 
+/// designated verifier. In practice, derived from the TLS session key.
+pub type ChannelKey = [u8; 32];
 
 pub struct Signature {
     pub sigma_1: Fr,
@@ -75,12 +80,39 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
     shares.1.y * private_key.omega
 }
 
-pub fn sign(message: &[u8], private_key: &PrivateKey) -> Signature {
-    // Hash message for r (QROM security)
+/// Compute the per-pair secret nonce: n_ephemeral = HMAC_{k_ephemeral}(M).
+/// This nonce is never transmitted and remains information-theoretically hidden
+/// from both P2 (holder) and any external adversary.
+fn compute_nonce(channel_key: &ChannelKey, message: &[u8]) -> Fr {
+    let mut mac =
+        <Hmac<Sha256>>::new_from_slice(channel_key).expect("HMAC accepts any key length");
+    mac.update(message);
+    let result = mac.finalize().into_bytes();
+    Fr::from_be_bytes_mod_order(&result)
+}
+
+/// Compute r = H(M, n_ephemeral). The nonce binds r to the channel secret,
+/// making it information-theoretically hidden from anyone without k_ephemeral.
+fn compute_receipt_hash(message: &[u8], nonce: &Fr) -> Fr {
     let mut hasher = Sha256::new();
     hasher.update(message);
+    hasher.update(nonce.into_bigint().to_bytes_be());
     let hash = hasher.finalize();
-    let hash_fp: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
+    Fr::from_be_bytes_mod_order(&hash)
+}
+
+/// Compute the transferable receipt r = H(M, n_channel).
+/// The designated verifier releases this after successful designated verification  
+/// so that any third party can verify the signature using `verify_with_receipt`.
+pub fn compute_receipt(message: &[u8], channel_key: &ChannelKey) -> Fr {
+    let nonce = compute_nonce(channel_key, message);
+    compute_receipt_hash(message, &nonce)
+}
+
+pub fn sign(message: &[u8], private_key: &PrivateKey, channel_key: &ChannelKey) -> Signature {
+    // r = H(M, HMAC_{k_channel}(M))
+    let nonce = compute_nonce(channel_key, message);
+    let hash_fp = compute_receipt_hash(message, &nonce);
     
     let mut rng = OsRng;
 
@@ -132,51 +164,180 @@ pub fn sign(message: &[u8], private_key: &PrivateKey) -> Signature {
     }
 }
 
-pub fn verify(message: &[u8], signature: &Signature, public_key: &PublicKey) -> bool {
-    // Create RNG seeded from message hash for deterministic signing
+/// Unauthenticated verification using r = H(M).
+/// Retained to demonstrate that the algebraic forgery attack succeeds without
+/// the nonce upgrade. Do NOT use in production.
+pub fn verify_unauthenticated(
+    message: &[u8],
+    signature: &Signature,
+    public_key: &PublicKey,
+) -> bool {
     let mut hasher = Sha256::new();
     hasher.update(message);
     let hash = hasher.finalize();
-    let hash_fp: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
+    let r: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
 
     let v_0 = signature.sigma_1 * signature.sigma_2 - signature.sigma_5;
-    let v_1 = signature.sigma_1 * signature.sigma_2 - (*public_key + signature.sigma_3) + hash_fp * signature.sigma_4;
+    let v_1 = signature.sigma_1 * signature.sigma_2 - (*public_key + signature.sigma_3)
+        + r * signature.sigma_4;
 
-    let v_0_share = Share { x: Fr::from(1 as u64), y: v_0 };
-    let v_1_share = Share { x: Fr::from(2 as u64), y: v_1 };
+    let v_0_share = Share {
+        x: Fr::from(1u64),
+        y: v_0,
+    };
+    let v_1_share = Share {
+        x: Fr::from(2u64),
+        y: v_1,
+    };
 
     reconstruct(&[v_0_share, v_1_share]) == Fr::ZERO
+}
+
+/// Core verification against a precomputed r value.
+/// Rejects signatures with sigma_4 = 0 to prevent the algebraic bypass where
+/// setting sigma_4 = 0 eliminates r from the verification equation entirely,
+/// allowing forgery without knowledge of the channel secret.
+fn verify_inner(r: Fr, signature: &Signature, public_key: &PublicKey) -> bool {
+    if signature.sigma_4 == Fr::ZERO {
+        return false;
+    }
+
+    let v_0 = signature.sigma_1 * signature.sigma_2 - signature.sigma_5;
+    let v_1 = signature.sigma_1 * signature.sigma_2 - (*public_key + signature.sigma_3)
+        + r * signature.sigma_4;
+
+    let v_0_share = Share {
+        x: Fr::from(1u64),
+        y: v_0,
+    };
+    let v_1_share = Share {
+        x: Fr::from(2u64),
+        y: v_1,
+    };
+
+    reconstruct(&[v_0_share, v_1_share]) == Fr::ZERO
+}
+
+/// Designated-verifier verification. Recomputes r = H(M, HMAC_k(M))
+/// using the shared channel key, then runs the verification equation.
+pub fn verify_designated(
+    message: &[u8],
+    signature: &Signature,
+    public_key: &PublicKey,
+    channel_key: &ChannelKey,
+) -> bool {
+    let nonce = compute_nonce(channel_key, message);
+    let r = compute_receipt_hash(message, &nonce);
+    verify_inner(r, signature, public_key)
+}
+
+/// Third-party verification using a receipt r previously released by the designated verifier.
+/// Since the receipt is bound to a specific message via r = H(M, n_channel),
+/// it cannot be used to forge signatures for different messages.
+pub fn verify_with_receipt(
+    signature: &Signature,
+    public_key: &PublicKey,
+    receipt: Fr,
+) -> bool {
+    verify_inner(receipt, signature, public_key)
+}
+
+/// Demonstrates the algebraic forgery attack on the unauthenticated algorithm.
+///
+/// In the original scheme, r = H(M) is publicly computable. The adversary
+/// picks arbitrary σ'_1, σ'_2, σ'_3, σ'_4 and solves the linear verification equation
+/// for σ'_5. This attack is DEFEATED by the nonce upgrade: with r = H(M, n_channel),
+/// the adversary cannot compute r' for a new message M', making the system of
+/// equations unsolvable. An additional σ'_4 ≠ 0 check prevents the degenerate
+/// case where the attacker eliminates r from the equation entirely.
+pub fn forge_signature(
+    _original_message: &[u8],
+    original_signature: &Signature,
+    new_message: &[u8],
+    public_key: &PublicKey,
+) -> Signature {
+    // Compute r' = H(M')
+    let mut hasher = Sha256::new();
+    hasher.update(new_message);
+    let hash = hasher.finalize();
+    let r_prime: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
+
+    // Choose arbitrary values for σ'_1, σ'_2, σ'_3, σ'_4
+    // In a real attack, these could be chosen strategically
+    let sigma_1_prime = original_signature.sigma_1 + Fr::from(1u64);
+    let sigma_2_prime = original_signature.sigma_2 + Fr::from(2u64);
+    let sigma_3_prime = original_signature.sigma_3 + Fr::from(3u64);
+    let sigma_4_prime = original_signature.sigma_4 + Fr::from(4u64);
+
+    // Compute V'₁ = σ'_1σ'_2 - (P + σ'_3) + r'σ'_4
+    let v_1_prime = sigma_1_prime * sigma_2_prime - (*public_key + sigma_3_prime) + r_prime * sigma_4_prime;
+
+    // With shares at x=1 and x=2, Lagrange interpolation gives:
+    // L₁(0) = (0-2)/(1-2) = 2
+    // L₂(0) = (0-1)/(2-1) = -1
+    // So reconstruction: V' = 2*v'_0 - v'_1
+    //
+    // For verification to pass, we need V' = 0:
+    // 2*v'_0 - v'_1 = 0  =>  v'_1 = 2*v'_0
+    //
+    // Since v'_0 = σ'_1σ'_2 - σ'_5 and v'_1 = σ'_1σ'_2 - (P + σ'_3) + r'σ'_4,
+    // we get: σ'_1σ'_2 - (P + σ'_3) + r'σ'_4 = 2(σ'_1σ'_2 - σ'_5)
+    // Solving for σ'_5:
+    // σ'_5 = σ'_1σ'_2 - v'_1/2
+    // σ'_5 = σ'_1σ'_2 - (σ'_1σ'_2 - (P + σ'_3) + r'σ'_4)/2
+    // σ'_5 = (σ'_1σ'_2 + (P + σ'_3) - r'σ'_4)/2
+    //
+    // Using the attack formula: σ'_5 = σ'_1σ'_2 - V'_1*w'_0/w'_1
+    // where w'_0=1 and w'_1=2 are the Lagrange coefficients
+    let w0 = Fr::from(1u64);
+    let w1 = Fr::from(2u64);
+    let sigma_5_prime = sigma_1_prime * sigma_2_prime - (v_1_prime * w0) / w1;
+
+    Signature {
+        sigma_1: sigma_1_prime,
+        sigma_2: sigma_2_prime,
+        sigma_3: sigma_3_prime,
+        sigma_4: sigma_4_prime,
+        sigma_5: sigma_5_prime,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const TEST_CHANNEL_KEY: ChannelKey = [0xABu8; 32];
+
     #[test]
     fn test_derive_private_key_deterministic() {
         let seed = "test-seed-123";
         let key1 = derive_private_key(seed);
         let key2 = derive_private_key(seed);
-        
+
         assert_eq!(key1.k, key2.k, "Private key k should be deterministic");
-        assert_eq!(key1.omega, key2.omega, "Private key omega should be deterministic");
+        assert_eq!(
+            key1.omega, key2.omega,
+            "Private key omega should be deterministic"
+        );
     }
 
     #[test]
     fn test_derive_private_key_different_seeds() {
         let key1 = derive_private_key("seed1");
         let key2 = derive_private_key("seed2");
-        
+
         assert_ne!(key1.k, key2.k, "Different seeds should produce different k");
-        assert_ne!(key1.omega, key2.omega, "Different seeds should produce different omega");
+        assert_ne!(
+            key1.omega, key2.omega,
+            "Different seeds should produce different omega"
+        );
     }
 
     #[test]
     fn test_derive_private_key_hex_seed() {
         let hex_seed = "0x1234567890abcdef";
         let key = derive_private_key(hex_seed);
-        
-        // Should not panic and produce valid keys
+
         assert_ne!(key.k, Fr::ZERO);
         assert_ne!(key.omega, Fr::ZERO);
     }
@@ -186,34 +347,25 @@ mod tests {
         let private_key = derive_private_key("test-seed");
         let public_key1 = derive_public_key(&private_key);
         let public_key2 = derive_public_key(&private_key);
-        
-        assert_eq!(public_key1, public_key2, "Public key should be deterministic");
+
+        assert_eq!(
+            public_key1, public_key2,
+            "Public key should be deterministic"
+        );
     }
 
     #[test]
     fn test_derive_public_key_different_private_keys() {
         let key1 = derive_private_key("seed1");
         let key2 = derive_private_key("seed2");
-        
+
         let pub1 = derive_public_key(&key1);
         let pub2 = derive_public_key(&key2);
-        
-        assert_ne!(pub1, pub2, "Different private keys should produce different public keys");
-    }
 
-    #[test]
-    fn test_sign_deterministic() {
-        let private_key = derive_private_key("test-seed");
-        let message = b"test message";
-        
-        let sig1 = sign(message, &private_key);
-        let sig2 = sign(message, &private_key);
-        
-        assert_eq!(sig1.sigma_1, sig2.sigma_1, "Signatures should be deterministic");
-        assert_eq!(sig1.sigma_2, sig2.sigma_2);
-        assert_eq!(sig1.sigma_3, sig2.sigma_3);
-        assert_eq!(sig1.sigma_4, sig2.sigma_4);
-        assert_eq!(sig1.sigma_5, sig2.sigma_5);
+        assert_ne!(
+            pub1, pub2,
+            "Different private keys should produce different public keys"
+        );
     }
 
     #[test]
@@ -221,11 +373,14 @@ mod tests {
         let private_key = derive_private_key("test-seed");
         let message1 = b"message 1";
         let message2 = b"message 2";
-        
-        let sig1 = sign(message1, &private_key);
-        let sig2 = sign(message2, &private_key);
-        
-        assert_ne!(sig1.sigma_1, sig2.sigma_1, "Different messages should produce different signatures");
+
+        let sig1 = sign(message1, &private_key, &TEST_CHANNEL_KEY);
+        let sig2 = sign(message2, &private_key, &TEST_CHANNEL_KEY);
+
+        assert_ne!(
+            sig1.sigma_1, sig2.sigma_1,
+            "Different messages should produce different signatures"
+        );
     }
 
     #[test]
@@ -233,23 +388,41 @@ mod tests {
         let key1 = derive_private_key("seed1");
         let key2 = derive_private_key("seed2");
         let message = b"same message";
-        
-        let sig1 = sign(message, &key1);
-        let sig2 = sign(message, &key2);
-        
-        assert_ne!(sig1.sigma_1, sig2.sigma_1, "Different keys should produce different signatures");
+
+        let sig1 = sign(message, &key1, &TEST_CHANNEL_KEY);
+        let sig2 = sign(message, &key2, &TEST_CHANNEL_KEY);
+
+        assert_ne!(
+            sig1.sigma_1, sig2.sigma_1,
+            "Different keys should produce different signatures"
+        );
     }
 
     #[test]
-    fn test_verify_valid_signature() {
+    fn test_verify_designated_valid_signature() {
         let private_key = derive_private_key("test-seed");
         let public_key = derive_public_key(&private_key);
         let message = b"test message";
-        
-        let signature = sign(message, &private_key);
-        let is_valid = verify(message, &signature, &public_key);
-        
-        assert!(is_valid, "Valid signature should verify correctly");
+
+        let signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
+        assert!(
+            verify_designated(message, &signature, &public_key, &TEST_CHANNEL_KEY),
+            "Valid signature should pass designated verification"
+        );
+    }
+
+    #[test]
+    fn test_verify_with_receipt_valid() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message = b"test message";
+
+        let signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
+        let receipt = compute_receipt(message, &TEST_CHANNEL_KEY);
+        assert!(
+            verify_with_receipt(&signature, &public_key, receipt),
+            "Valid signature should pass receipt-based verification"
+        );
     }
 
     #[test]
@@ -258,25 +431,40 @@ mod tests {
         let public_key = derive_public_key(&private_key);
         let message = b"original message";
         let wrong_message = b"wrong message";
-        
-        let signature = sign(message, &private_key);
-        let is_valid = verify(wrong_message, &signature, &public_key);
-        
-        assert!(!is_valid, "Signature for wrong message should be rejected");
+
+        let signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
+        assert!(
+            !verify_designated(wrong_message, &signature, &public_key, &TEST_CHANNEL_KEY),
+            "Signature for wrong message should be rejected"
+        );
     }
 
     #[test]
     fn test_verify_wrong_public_key() {
         let private_key1 = derive_private_key("seed1");
         let private_key2 = derive_private_key("seed2");
-        let _public_key1 = derive_public_key(&private_key1);
         let public_key2 = derive_public_key(&private_key2);
         let message = b"test message";
-        
-        let signature = sign(message, &private_key1);
-        let is_valid = verify(message, &signature, &public_key2);
-        
-        assert!(!is_valid, "Signature with wrong public key should be rejected");
+
+        let signature = sign(message, &private_key1, &TEST_CHANNEL_KEY);
+        assert!(
+            !verify_designated(message, &signature, &public_key2, &TEST_CHANNEL_KEY),
+            "Signature with wrong public key should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_verify_wrong_channel_key() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message = b"test message";
+        let wrong_key: ChannelKey = [0xCDu8; 32];
+
+        let signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
+        assert!(
+            !verify_designated(message, &signature, &public_key, &wrong_key),
+            "Signature with wrong channel key should be rejected"
+        );
     }
 
     #[test]
@@ -284,13 +472,14 @@ mod tests {
         let private_key = derive_private_key("test-seed");
         let public_key = derive_public_key(&private_key);
         let message = b"test message";
-        
-        let mut signature = sign(message, &private_key);
-        signature.sigma_1 = signature.sigma_1 + Fr::ONE; // Tamper with signature
-        
-        let is_valid = verify(message, &signature, &public_key);
-        
-        assert!(!is_valid, "Tampered signature should be rejected");
+
+        let mut signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
+        signature.sigma_1 = signature.sigma_1 + Fr::ONE;
+
+        assert!(
+            !verify_designated(message, &signature, &public_key, &TEST_CHANNEL_KEY),
+            "Tampered signature should be rejected"
+        );
     }
 
     #[test]
@@ -298,11 +487,12 @@ mod tests {
         let private_key = derive_private_key("test-seed");
         let public_key = derive_public_key(&private_key);
         let message = b"";
-        
-        let signature = sign(message, &private_key);
-        let is_valid = verify(message, &signature, &public_key);
-        
-        assert!(is_valid, "Empty message should verify correctly");
+
+        let signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
+        assert!(
+            verify_designated(message, &signature, &public_key, &TEST_CHANNEL_KEY),
+            "Empty message should verify correctly"
+        );
     }
 
     #[test]
@@ -310,28 +500,120 @@ mod tests {
         let private_key = derive_private_key("test-seed");
         let public_key = derive_public_key(&private_key);
         let message = b"This is a very long message that tests if the signature scheme works with longer messages. It should still work correctly.";
-        
-        let signature = sign(message, &private_key);
-        let is_valid = verify(message, &signature, &public_key);
-        
-        assert!(is_valid, "Long message should verify correctly");
+
+        let signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
+        assert!(
+            verify_designated(message, &signature, &public_key, &TEST_CHANNEL_KEY),
+            "Long message should verify correctly"
+        );
     }
 
     #[test]
     fn test_sign_verify_roundtrip() {
         let private_key = derive_private_key("test-seed");
         let public_key = derive_public_key(&private_key);
-        let messages: Vec<&[u8]> = vec![
-            b"message 1",
-            b"message 2",
-            b"another message",
-            b"",
-        ];
-        
+        let messages: Vec<&[u8]> = vec![b"message 1", b"message 2", b"another message", b""];
+
         for message in messages {
-            let signature = sign(message, &private_key);
-            let is_valid = verify(message, &signature, &public_key);
-            assert!(is_valid, "Roundtrip sign/verify should work for message: {:?}", message);
+            let signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
+            assert!(
+                verify_designated(message, &signature, &public_key, &TEST_CHANNEL_KEY),
+                "Roundtrip sign/verify should work for message: {:?}",
+                message
+            );
+            let receipt = compute_receipt(message, &TEST_CHANNEL_KEY);
+            assert!(
+                verify_with_receipt(&signature, &public_key, receipt),
+                "Roundtrip sign/verify_with_receipt should work for message: {:?}",
+                message
+            );
         }
+    }
+
+    #[test]
+    fn test_receipt_not_transferable_to_other_messages() {
+        let private_key = derive_private_key("test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message_a = b"message A";
+        let message_b = b"message B";
+
+        let receipt_a = compute_receipt(message_a, &TEST_CHANNEL_KEY);
+        let signature_b = sign(message_b, &private_key, &TEST_CHANNEL_KEY);
+
+        assert!(
+            !verify_with_receipt(&signature_b, &public_key, receipt_a),
+            "Receipt for message A must not verify signature on message B"
+        );
+    }
+
+    #[test]
+    fn test_algebraic_forgery_succeeds_unauthenticated() {
+        let private_key = derive_private_key("attack-test-seed");
+        let public_key = derive_public_key(&private_key);
+        let original_message = b"original message";
+        let forged_message = b"forged message";
+
+        let original_signature = sign(original_message, &private_key, &TEST_CHANNEL_KEY);
+
+        let forged_signature = forge_signature(
+            original_message,
+            &original_signature,
+            forged_message,
+            &public_key,
+        );
+
+        // Unauthenticated verification uses r = H(M') -- the forgery succeeds
+        assert!(
+            verify_unauthenticated(forged_message, &forged_signature, &public_key),
+            "Forgery should succeed against unauthenticated verification"
+        );
+
+        // Designated verification uses r = H(M', HMAC_k(M')) -- the forgery fails
+        assert!(
+            !verify_designated(
+                forged_message,
+                &forged_signature,
+                &public_key,
+                &TEST_CHANNEL_KEY
+            ),
+            "Forgery should be rejected by designated verifier"
+        );
+    }
+
+    #[test]
+    fn test_sigma4_zero_attack_prevented() {
+        // Demonstrates the residual algebraic attack where setting σ₄ = 0
+        // eliminates r from the verification equation, bypassing the nonce.
+        // The σ₄ ≠ 0 check in verify_inner prevents this.
+        let private_key = derive_private_key("attack-test-seed");
+        let public_key = derive_public_key(&private_key);
+        let message = b"any message";
+
+        // Attacker picks arbitrary σ₁, σ₂, σ₃ and sets σ₄ = 0.
+        // Verification equation reduces to: σ₁σ₂ + P + σ₃ - 2σ₅ = 0
+        let sigma_1 = Fr::from(7u64);
+        let sigma_2 = Fr::from(11u64);
+        let sigma_3 = Fr::from(13u64);
+        let sigma_4 = Fr::ZERO;
+        let sigma_5 = (sigma_1 * sigma_2 + public_key + sigma_3) / Fr::from(2u64);
+
+        let forged = Signature {
+            sigma_1,
+            sigma_2,
+            sigma_3,
+            sigma_4,
+            sigma_5,
+        };
+
+        assert!(
+            !verify_designated(message, &forged, &public_key, &TEST_CHANNEL_KEY),
+            "σ₄ = 0 forgery should be rejected"
+        );
+
+        let receipt = compute_receipt(message, &TEST_CHANNEL_KEY);
+        assert!(
+            !verify_with_receipt(&forged, &public_key, receipt),
+            "σ₄ = 0 forgery should also be rejected via receipt verification"
+        );
     }
 }

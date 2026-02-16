@@ -23,6 +23,8 @@ pub fn split(secret: Fr, threshold: usize, num_shares: usize, rng: &mut dyn RngC
     }
 
     // Generate shares by evaluating polynomial at distinct x values
+    // x values by default are 1, 2, ..., num_shares
+    // For specific production instances of the scheme, where only perfect 2-of-2 shamir is used, the 2 x values can be chosen arbitrarily while remaining distinct and publicly known
     let mut shares = Vec::new();
     for i in 1..=num_shares {
         let x = Fr::from(i as u64);
