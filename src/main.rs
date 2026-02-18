@@ -52,16 +52,16 @@ fn main() {
     let is_valid = verify_designated(message_input.as_bytes(), &sig, &public_key, &channel_key);
     let is_forged = verify_designated(&[1, 2, 3], &sig, &public_key, &channel_key);
 
-    println!("Private Key: ({}, {})", private_key.k, private_key.omega);
+    println!("Private Key: {}", private_key);
     println!(
-        "Private Key (hex): (0x{}, 0x{})",
-        hex::encode(private_key.k.into_bigint().to_bytes_be()),
-        hex::encode(private_key.omega.into_bigint().to_bytes_be())
+        "Private Key (hex): 0x{}",
+        hex::encode(private_key.into_bigint().to_bytes_be())
     );
-    println!("Public Key: {}", public_key);
+    println!("Public Key: (w0={}, w1={})", public_key.w0, public_key.w1);
     println!(
-        "Public Key (hex): 0x{}",
-        hex::encode(public_key.into_bigint().to_bytes_be())
+        "Public Key (hex): w0=0x{}, w1=0x{}",
+        hex::encode(public_key.w0.into_bigint().to_bytes_be()),
+        hex::encode(public_key.w1.into_bigint().to_bytes_be())
     );
     println!(
         "Signature: ({}, {}, {}, {}, {})",
