@@ -8,12 +8,15 @@ pub struct Share {
     pub y: Fr,
 }
 
-pub fn split(secret: Fr, threshold: usize, num_shares: usize, rng: &mut dyn RngCore) -> Vec<Share> {
+pub fn split(secret: Fr, threshold: usize, num_shares: usize, evaluation_points: Vec<Fr>, rng: &mut dyn RngCore) -> Vec<Share> {
     if threshold < 1 {
         panic!("Threshold must be at least 1");
     }
     if num_shares < threshold {
         panic!("Number of shares must be at least the threshold");
+    }
+    if evaluation_points.len() != num_shares {
+        panic!("Number of evaluation points must equal num_shares");
     }
 
     // Generate random coefficients for polynomial f(x) = secret + a1*x + ... + a_{k-1}*x^{k-1}
@@ -22,12 +25,9 @@ pub fn split(secret: Fr, threshold: usize, num_shares: usize, rng: &mut dyn RngC
         coefficients.push(Fr::rand(rng));
     }
 
-    // Generate shares by evaluating polynomial at distinct x values
-    // x values by default are 1, 2, ..., num_shares
-    // For specific production instances of the scheme, where only perfect 2-of-2 shamir is used, the 2 x values can be chosen arbitrarily while remaining distinct and publicly known
+    // Generate shares by evaluating polynomial at the provided x values
     let mut shares = Vec::new();
-    for i in 1..=num_shares {
-        let x = Fr::from(i as u64);
+    for x in evaluation_points {
         let y = evaluate_polynomial(&coefficients, x);
         shares.push(Share { x, y });
     }
@@ -81,8 +81,9 @@ mod tests {
     fn test_shamir_basic() {
         let mut rng = ChaChaRng::from_seed([0u8; 32]);
         let secret = Fr::from(42u64);
+        let evaluation_points = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64), Fr::from(4u64), Fr::from(5u64)];
 
-        let shares = split(secret, 3, 5, &mut rng);
+        let shares = split(secret, 3, 5, evaluation_points, &mut rng);
         assert_eq!(shares.len(), 5);
 
         // Reconstruct with exactly threshold shares
@@ -98,8 +99,9 @@ mod tests {
     fn test_shamir_2_of_2() {
         let mut rng = ChaChaRng::from_seed([0u8; 32]);
         let secret = Fr::from(42u64);
+        let evaluation_points = vec![Fr::from(1u64), Fr::from(2u64)];
 
-        let shares = split(secret, 2, 2, &mut rng);
+        let shares = split(secret, 2, 2, evaluation_points, &mut rng);
         assert_eq!(shares.len(), 2);
         
         let reconstructed = reconstruct(&shares);
@@ -110,8 +112,9 @@ mod tests {
     fn test_shamir_different_combinations() {
         let mut rng = ChaChaRng::from_seed([1u8; 32]);
         let secret = Fr::rand(&mut rng);
+        let evaluation_points = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64), Fr::from(4u64), Fr::from(5u64)];
 
-        let shares = split(secret, 3, 5, &mut rng);
+        let shares = split(secret, 3, 5, evaluation_points, &mut rng);
 
         // Test different combinations of 3 shares
         let reconstructed1 = reconstruct(&[shares[0].clone(), shares[1].clone(), shares[2].clone()]);

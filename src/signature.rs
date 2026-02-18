@@ -64,7 +64,8 @@ fn derive_private_key_shares(private_key: &PrivateKey) -> (Share, Share) {
     let hash = hasher.finalize();
     
     let mut rng = ChaChaRng::from_seed(hash.into());
-    let shares = split(private_key.k, 2, 2, &mut rng);
+    let evaluation_points = vec![Fr::from(1u64), Fr::from(2u64)];
+    let shares = split(private_key.k, 2, 2, evaluation_points, &mut rng);
 
     assert_eq!(shares[0].x, Fr::from(1 as u64), "Share 0 x does not equal 1");
     assert_eq!(shares[1].x, Fr::from(2 as u64), "Share 1 x does not equal 2");
@@ -126,7 +127,8 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, channel_key: &ChannelKey) 
 
     let epsilon = alpha * beta;
     let mut rng_epsilon = OsRng;
-    let epsilon_shares = split(epsilon, 2, 2, &mut rng_epsilon);
+    let evaluation_points = vec![Fr::from(1u64), Fr::from(2u64)];
+    let epsilon_shares = split(epsilon, 2, 2, evaluation_points, &mut rng_epsilon);
 
     let d = d_prime + private_key.omega;
     
