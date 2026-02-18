@@ -1,5 +1,6 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, Field, PrimeField, UniformRand};
+use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
 use rand::SeedableRng;
@@ -8,12 +9,13 @@ use sha2::{Digest, Sha256};
 
 use crate::shamir::{reconstruct, split, Share};
 
-pub struct PrivateKey {
-    pub k: Fr,
-    pub omega: Fr,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicKey {
+    pub w0: Fr,
+    pub w1: Fr,
 }
 
-pub type PublicKey = Fr;
+pub type PrivateKey = Fr;
 
 /// Shared secret key for the authenticated channel between signer and 
 /// designated verifier. In practice, derived from the TLS session key.
@@ -46,15 +48,9 @@ pub fn derive_private_key(seed: &str) -> PrivateKey {
     // Initialize RNG from seed
     let mut rng = ChaChaRng::from_seed(seed_array);
 
-    // Generate 2 random numbers in Fp (where p is the modulus of Fr, ~2^254)
+    // Generate a random number in Fr
     // Fr in BN254 curve uses a 254-bit prime, which is close to 2^256
-    let random1 = Fr::rand(&mut rng);
-    let random2 = Fr::rand(&mut rng);
-
-    PrivateKey {
-        k: random1,
-        omega: random2,
-    }
+    Fr::rand(&mut rng)
 }
 
 fn derive_private_key_shares(private_key: &PrivateKey) -> (Share, Share) {
@@ -76,9 +72,21 @@ fn derive_private_key_shares(private_key: &PrivateKey) -> (Share, Share) {
 }
 
 pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
-    let shares = derive_private_key_shares(private_key);
-
-    shares.1.y * private_key.omega
+    // Derive the public key (w0, w1) from the private key with HKDF
+    let private_key_bytes = private_key.into_bigint().to_bytes_be();
+    
+    let hk = Hkdf::<Sha256>::new(None, &private_key_bytes);
+    let mut okm = [0u8; 64];
+    hk.expand(b"it-sig-public-key", &mut okm).expect("HKDF expand failed");
+    
+    // Split the output into two 32-byte chunks and convert to Fr
+    let w0_bytes = &okm[0..32];
+    let w1_bytes = &okm[32..64];
+    
+    PublicKey {
+        w0: Fr::from_be_bytes_mod_order(w0_bytes),
+        w1: Fr::from_be_bytes_mod_order(w1_bytes),
+    }
 }
 
 /// Compute the per-pair secret nonce: n_ephemeral = HMAC_{k_ephemeral}(M).
