@@ -64,8 +64,8 @@ fn main() {
         hex::encode(public_key.w1.into_bigint().to_bytes_be())
     );
     println!(
-        "Signature: ({}, {}, {}, {}, {})",
-        sig.sigma_1, sig.sigma_2, sig.sigma_3, sig.sigma_4, sig.sigma_5
+        "Signature: ( {}, {}, {}, {})",
+        sig.sigma_1, sig.sigma_2, sig.sigma_3, sig.sigma_4
     );
     println!("Designated-verifier check: {}", is_valid);
     println!("Invalid for wrong message [1,2,3] (should fail): {}", is_forged);
@@ -115,12 +115,11 @@ fn main() {
     println!("\nOriginal message: {}", message_input);
     println!("Forged message: {}", forged_message_input);
     println!(
-        "\nForged signature: ({}, {}, {}, {}, {})",
+        "\nForged signature: ( {}, {}, {}, {})",
         forged_sig.sigma_1,
         forged_sig.sigma_2,
         forged_sig.sigma_3,
-        forged_sig.sigma_4,
-        forged_sig.sigma_5
+        forged_sig.sigma_4
     );
     println!(
         "\nUnauthenticated verify (r = H(M)):           {}",
