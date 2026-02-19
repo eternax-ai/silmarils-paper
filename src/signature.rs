@@ -1,5 +1,6 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, Field, PrimeField, UniformRand};
+use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
 use rand::SeedableRng;
@@ -8,12 +9,13 @@ use sha2::{Digest, Sha256};
 
 use crate::shamir::{reconstruct, split, Share};
 
-pub struct PrivateKey {
-    pub k: Fr,
-    pub omega: Fr,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicKey {
+    pub w0: Fr,
+    pub w1: Fr,
 }
 
-pub type PublicKey = Fr;
+pub type PrivateKey = Fr;
 
 /// Shared secret key for the authenticated channel between signer and 
 /// designated verifier. In practice, derived from the TLS session key.
@@ -46,38 +48,44 @@ pub fn derive_private_key(seed: &str) -> PrivateKey {
     // Initialize RNG from seed
     let mut rng = ChaChaRng::from_seed(seed_array);
 
-    // Generate 2 random numbers in Fp (where p is the modulus of Fr, ~2^254)
+    // Generate a random number in Fr
     // Fr in BN254 curve uses a 254-bit prime, which is close to 2^256
-    let random1 = Fr::rand(&mut rng);
-    let random2 = Fr::rand(&mut rng);
-
-    PrivateKey {
-        k: random1,
-        omega: random2,
-    }
+    Fr::rand(&mut rng)
 }
 
-fn derive_private_key_shares(private_key: &PrivateKey) -> (Share, Share) {
+fn derive_private_key_shares(private_key: &PrivateKey, evaluation_points: Vec<Fr>) -> (Share, Share) {
     let mut hasher = Sha256::new();
-    hasher.update(private_key.k.into_bigint().to_bytes_be());
-    hasher.update(private_key.omega.into_bigint().to_bytes_be());
+    hasher.update(private_key.into_bigint().to_bytes_be());
     let hash = hasher.finalize();
     
     let mut rng = ChaChaRng::from_seed(hash.into());
-    let shares = split(private_key.k, 2, 2, &mut rng);
+    let evaluation_points_clone = evaluation_points.clone();
+    let shares = split(*private_key, 2, 2, evaluation_points, &mut rng);
 
-    assert_eq!(shares[0].x, Fr::from(1 as u64), "Share 0 x does not equal 1");
-    assert_eq!(shares[1].x, Fr::from(2 as u64), "Share 1 x does not equal 2");
+    assert_eq!(shares[0].x, evaluation_points_clone[0], "Share 0 x does not match evaluation point 0");
+    assert_eq!(shares[1].x, evaluation_points_clone[1], "Share 1 x does not match evaluation point 1");
 
-    assert_eq!(private_key.k, reconstruct(&[shares[0].clone(), shares[1].clone()]), "Private key does not equal share 0 y + share 1 y");
+    assert_eq!(*private_key, reconstruct(&[shares[0].clone(), shares[1].clone()]), "Private key does not equal reconstructed shares");
 
     (shares[0].clone(), shares[1].clone())
 }
 
 pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
-    let shares = derive_private_key_shares(private_key);
-
-    shares.1.y * private_key.omega
+    // Derive the public key (w0, w1) from the private key with HKDF
+    let private_key_bytes = private_key.into_bigint().to_bytes_be();
+    
+    let hk = Hkdf::<Sha256>::new(None, &private_key_bytes);
+    let mut okm = [0u8; 64];
+    hk.expand(b"it-sig-public-key", &mut okm).expect("HKDF expand failed");
+    
+    // Split the output into two 32-byte chunks and convert to Fr
+    let w0_bytes = &okm[0..32];
+    let w1_bytes = &okm[32..64];
+    
+    PublicKey {
+        w0: Fr::from_be_bytes_mod_order(w0_bytes),
+        w1: Fr::from_be_bytes_mod_order(w1_bytes),
+    }
 }
 
 /// Compute the per-pair secret nonce: n_ephemeral = HMAC_{k_ephemeral}(M).
@@ -101,56 +109,60 @@ fn compute_receipt_hash(message: &[u8], nonce: &Fr) -> Fr {
     Fr::from_be_bytes_mod_order(&hash)
 }
 
-/// Compute the transferable receipt r = H(M, n_channel).
+/// Compute the transferable receipt r = H(M, n_ephemeral).
 /// The designated verifier releases this after successful designated verification  
 /// so that any third party can verify the signature using `verify_with_receipt`.
-pub fn compute_receipt(message: &[u8], channel_key: &ChannelKey) -> Fr {
-    let nonce = compute_nonce(channel_key, message);
+pub fn compute_receipt(message: &[u8], ephemeral_key: &ChannelKey) -> Fr {
+    let nonce = compute_nonce(ephemeral_key, message);
     compute_receipt_hash(message, &nonce)
 }
 
-pub fn sign(message: &[u8], private_key: &PrivateKey, channel_key: &ChannelKey) -> Signature {
+pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey) -> Signature {
+    // Derive public key from private key
+    let public_key = derive_public_key(private_key);
+    
     // r = H(M, HMAC_{k_channel}(M))
-    let nonce = compute_nonce(channel_key, message);
+    let nonce = compute_nonce(ephemeral_key, message);
     let hash_fp = compute_receipt_hash(message, &nonce);
     
     let mut rng = OsRng;
-
-    let key_shares = derive_private_key_shares(private_key);
+    let private_key_bytes = private_key.into_bigint().to_bytes_be();
+    let mut mac = <Hmac<Sha256>>::new_from_slice(&private_key_bytes).expect("HMAC accepts any key length");
+    mac.update(message);
+    let per_message_key = mac.finalize().into_bytes();
+    let per_message_key_fp = Fr::from_be_bytes_mod_order(&per_message_key);
+    let evaluation_points = vec![public_key.w0, public_key.w1];
+    let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points);
     
     // Generate 4 random numbers in Fp: alpha, beta, b, d_prime
     let alpha = Fr::rand(&mut rng);
     let beta = Fr::rand(&mut rng);
     let b = Fr::rand(&mut rng);
-    let d_prime = Fr::rand(&mut rng);
+    let d = Fr::rand(&mut rng);
 
     let epsilon = alpha * beta;
     let mut rng_epsilon = OsRng;
-    let epsilon_shares = split(epsilon, 2, 2, &mut rng_epsilon);
+    let evaluation_points = vec![public_key.w0, public_key.w1];
+    let epsilon_shares = split(epsilon, 2, 2, evaluation_points, &mut rng_epsilon);
 
-    let d = d_prime + private_key.omega;
     
-    let sigma_1 = b * (private_key.k - hash_fp);
+    let sigma_1 = b * (per_message_key_fp - hash_fp);
     let sigma_2 = d/b;
-    let sigma_3 = key_shares.1.y * d_prime;
+    let sigma_3 = key_shares.1.y * d;
     let sigma_4 = epsilon_shares[1].y * d/epsilon;
     let sigma_5 = d * (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon);
 
-    // verify
-    let public_key = derive_public_key(private_key);
-
-    assert_eq!(public_key + sigma_3, key_shares.1.y * d, "Public key + sigma_3 does not equal K_1 * d");
     let v_0 = sigma_1 * sigma_2 - sigma_5;
-    let v_1 = sigma_1 * sigma_2 - (public_key + sigma_3) + hash_fp * sigma_4;
+    let v_1 = sigma_1 * sigma_2 - sigma_3 + hash_fp * sigma_4;
 
-    let exp_v_0 =  d * ((private_key.k - hash_fp) - (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon));
-    let exp_v_1 = d * ((private_key.k - hash_fp) - (key_shares.1.y - epsilon_shares[1].y * hash_fp/epsilon));
+    let exp_v_0 =  d * ((per_message_key_fp - hash_fp) - (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon));
+    let exp_v_1 = d * ((per_message_key_fp - hash_fp) - (key_shares.1.y - epsilon_shares[1].y * hash_fp/epsilon));
 
     assert_eq!(v_0, exp_v_0, "V_0 does not equal d * ((K - r) - (K_0 - epsilon_0 * r/epsilon))");
     assert_eq!(v_1, exp_v_1, "V_1 does not equal d * ((K - r) - (K_1 - epsilon_1 * r/epsilon))");
 
-    let v_0_share = Share { x: Fr::from(1 as u64), y: v_0 };
-    let v_1_share = Share { x: Fr::from(2 as u64), y: v_1 };
+    let v_0_share = Share { x: public_key.w0, y: v_0 };
+    let v_1_share = Share { x: public_key.w1, y: v_1 };
     let result = reconstruct(&[v_0_share, v_1_share]);
 
     assert_eq!(result, Fr::ZERO, "Verification check does not equal 0");
@@ -178,15 +190,15 @@ pub fn verify_unauthenticated(
     let r: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
 
     let v_0 = signature.sigma_1 * signature.sigma_2 - signature.sigma_5;
-    let v_1 = signature.sigma_1 * signature.sigma_2 - (*public_key + signature.sigma_3)
+    let v_1 = signature.sigma_1 * signature.sigma_2 - signature.sigma_3
         + r * signature.sigma_4;
 
     let v_0_share = Share {
-        x: Fr::from(1u64),
+        x: public_key.w0,
         y: v_0,
     };
     let v_1_share = Share {
-        x: Fr::from(2u64),
+        x: public_key.w1,
         y: v_1,
     };
 
@@ -203,15 +215,15 @@ fn verify_inner(r: Fr, signature: &Signature, public_key: &PublicKey) -> bool {
     }
 
     let v_0 = signature.sigma_1 * signature.sigma_2 - signature.sigma_5;
-    let v_1 = signature.sigma_1 * signature.sigma_2 - (*public_key + signature.sigma_3)
+    let v_1 = signature.sigma_1 * signature.sigma_2 - signature.sigma_3
         + r * signature.sigma_4;
 
     let v_0_share = Share {
-        x: Fr::from(1u64),
+        x: public_key.w0,
         y: v_0,
     };
     let v_1_share = Share {
-        x: Fr::from(2u64),
+        x: public_key.w1,
         y: v_1,
     };
 
@@ -270,7 +282,7 @@ pub fn forge_signature(
     let sigma_4_prime = original_signature.sigma_4 + Fr::from(4u64);
 
     // Compute V'₁ = σ'_1σ'_2 - (P + σ'_3) + r'σ'_4
-    let v_1_prime = sigma_1_prime * sigma_2_prime - (*public_key + sigma_3_prime) + r_prime * sigma_4_prime;
+    let v_1_prime = sigma_1_prime * sigma_2_prime - sigma_3_prime + r_prime * sigma_4_prime;
 
     // With shares at x=1 and x=2, Lagrange interpolation gives:
     // L₁(0) = (0-2)/(1-2) = 2
@@ -289,9 +301,7 @@ pub fn forge_signature(
     //
     // Using the attack formula: σ'_5 = σ'_1σ'_2 - V'_1*w'_0/w'_1
     // where w'_0=1 and w'_1=2 are the Lagrange coefficients
-    let w0 = Fr::from(1u64);
-    let w1 = Fr::from(2u64);
-    let sigma_5_prime = sigma_1_prime * sigma_2_prime - (v_1_prime * w0) / w1;
+    let sigma_5_prime = sigma_1_prime * sigma_2_prime - (v_1_prime * public_key.w0) / public_key.w1;
 
     Signature {
         sigma_1: sigma_1_prime,
@@ -314,11 +324,7 @@ mod tests {
         let key1 = derive_private_key(seed);
         let key2 = derive_private_key(seed);
 
-        assert_eq!(key1.k, key2.k, "Private key k should be deterministic");
-        assert_eq!(
-            key1.omega, key2.omega,
-            "Private key omega should be deterministic"
-        );
+        assert_eq!(key1.0, key2.0, "Private key should be deterministic");
     }
 
     #[test]
@@ -326,11 +332,7 @@ mod tests {
         let key1 = derive_private_key("seed1");
         let key2 = derive_private_key("seed2");
 
-        assert_ne!(key1.k, key2.k, "Different seeds should produce different k");
-        assert_ne!(
-            key1.omega, key2.omega,
-            "Different seeds should produce different omega"
-        );
+        assert_ne!(key1, key2, "Different seeds should produce different k");
     }
 
     #[test]
@@ -338,8 +340,7 @@ mod tests {
         let hex_seed = "0x1234567890abcdef";
         let key = derive_private_key(hex_seed);
 
-        assert_ne!(key.k, Fr::ZERO);
-        assert_ne!(key.omega, Fr::ZERO);
+        assert_ne!(key, Fr::ZERO);
     }
 
     #[test]
@@ -590,12 +591,12 @@ mod tests {
         let message = b"any message";
 
         // Attacker picks arbitrary σ₁, σ₂, σ₃ and sets σ₄ = 0.
-        // Verification equation reduces to: σ₁σ₂ + P + σ₃ - 2σ₅ = 0
+        // Verification equation reduces to: σ₁σ₂ + σ₃ - 2σ₅ = 0
         let sigma_1 = Fr::from(7u64);
         let sigma_2 = Fr::from(11u64);
         let sigma_3 = Fr::from(13u64);
         let sigma_4 = Fr::ZERO;
-        let sigma_5 = (sigma_1 * sigma_2 + public_key + sigma_3) / Fr::from(2u64);
+        let sigma_5 = (sigma_1 * sigma_2 + sigma_3) / Fr::from(2u64);
 
         let forged = Signature {
             sigma_1,
