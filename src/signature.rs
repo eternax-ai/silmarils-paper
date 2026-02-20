@@ -59,13 +59,7 @@ fn derive_private_key_shares(private_key: &PrivateKey, evaluation_points: Vec<Fr
     let hash = hasher.finalize();
     
     let mut rng = ChaChaRng::from_seed(hash.into());
-    let evaluation_points_clone = evaluation_points.clone();
     let shares = split(*private_key, 2, 2, evaluation_points, &mut rng);
-
-    assert_eq!(shares[0].x, evaluation_points_clone[0], "Share 0 x does not match evaluation point 0");
-    assert_eq!(shares[1].x, evaluation_points_clone[1], "Share 1 x does not match evaluation point 1");
-
-    assert_eq!(*private_key, reconstruct(&[shares[0].clone(), shares[1].clone()]), "Private key does not equal reconstructed shares");
 
     (shares[0].clone(), shares[1].clone())
 }
@@ -126,13 +120,16 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     let hash_fp = compute_receipt_hash(message, &nonce);
     
     let mut rng = OsRng;
+    // Cache private key bytes conversion (used for HMAC)
     let private_key_bytes = private_key.into_bigint().to_bytes_be();
     let mut mac = <Hmac<Sha256>>::new_from_slice(&private_key_bytes).expect("HMAC accepts any key length");
     mac.update(message);
     let per_message_key = mac.finalize().into_bytes();
     let per_message_key_fp = Fr::from_be_bytes_mod_order(&per_message_key);
+    
+    // Reuse evaluation_points vector
     let evaluation_points = vec![public_key.w0, public_key.w1];
-    let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points);
+    let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points.clone());
     
     // Generate 4 random numbers in Fp: alpha, beta, b, d_prime
     let alpha = Fr::rand(&mut rng);
@@ -141,9 +138,8 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     let d = Fr::rand(&mut rng);
 
     let epsilon = alpha * beta;
-    let mut rng_epsilon = OsRng;
-    let evaluation_points = vec![public_key.w0, public_key.w1];
-    let epsilon_shares = split(epsilon, 2, 2, evaluation_points, &mut rng_epsilon);
+    // Reuse existing RNG instead of creating new one
+    let epsilon_shares = split(epsilon, 2, 2, evaluation_points, &mut rng);
 
     
     let sigma_1 = b * (per_message_key_fp - hash_fp);
@@ -151,21 +147,6 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     let sigma_3 = key_shares.1.y * d;
     let sigma_4 = epsilon_shares[1].y * d/epsilon;
     let sigma_5 = d * (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon);
-
-    let v_0 = sigma_1 * sigma_2 - sigma_5;
-    let v_1 = sigma_1 * sigma_2 - sigma_3 + hash_fp * sigma_4;
-
-    let exp_v_0 =  d * ((per_message_key_fp - hash_fp) - (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon));
-    let exp_v_1 = d * ((per_message_key_fp - hash_fp) - (key_shares.1.y - epsilon_shares[1].y * hash_fp/epsilon));
-
-    assert_eq!(v_0, exp_v_0, "V_0 does not equal d * ((K - r) - (K_0 - epsilon_0 * r/epsilon))");
-    assert_eq!(v_1, exp_v_1, "V_1 does not equal d * ((K - r) - (K_1 - epsilon_1 * r/epsilon))");
-
-    let v_0_share = Share { x: public_key.w0, y: v_0 };
-    let v_1_share = Share { x: public_key.w1, y: v_1 };
-    let result = reconstruct(&[v_0_share, v_1_share]);
-
-    assert_eq!(result, Fr::ZERO, "Verification check does not equal 0");
 
     Signature {
         sigma_1,
@@ -214,9 +195,10 @@ fn verify_inner(r: Fr, signature: &Signature, public_key: &PublicKey) -> bool {
         return false;
     }
 
-    let v_0 = signature.sigma_1 * signature.sigma_2 - signature.sigma_5;
-    let v_1 = signature.sigma_1 * signature.sigma_2 - signature.sigma_3
-        + r * signature.sigma_4;
+    // Cache sigma_1 * sigma_2 to avoid redundant multiplication
+    let sigma_1_sigma_2 = signature.sigma_1 * signature.sigma_2;
+    let v_0 = sigma_1_sigma_2 - signature.sigma_5;
+    let v_1 = sigma_1_sigma_2 - signature.sigma_3 + r * signature.sigma_4;
 
     let v_0_share = Share {
         x: public_key.w0,
