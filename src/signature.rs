@@ -1,5 +1,5 @@
-use ark_bn254::Fr;
-use ark_ff::{BigInteger, Field, PrimeField, UniformRand};
+use ark_secp256k1::Fr;
+use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
@@ -48,8 +48,7 @@ pub fn derive_private_key(seed: &str) -> PrivateKey {
     // Initialize RNG from seed
     let mut rng = ChaChaRng::from_seed(seed_array);
 
-    // Generate a random number in Fr
-    // Fr in BN254 curve uses a 254-bit prime, which is close to 2^256
+    // Generate a random number in secp256k1 scalar field
     Fr::rand(&mut rng)
 }
 
@@ -306,7 +305,7 @@ mod tests {
         let key1 = derive_private_key(seed);
         let key2 = derive_private_key(seed);
 
-        assert_eq!(key1.0, key2.0, "Private key should be deterministic");
+        assert_eq!(key1, key2, "Private key should be deterministic");
     }
 
     #[test]
@@ -457,7 +456,7 @@ mod tests {
         let message = b"test message";
 
         let mut signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
-        signature.sigma_1 = signature.sigma_1 + Fr::ONE;
+        signature.sigma_1 = signature.sigma_1 + Fr::from(1u64);
 
         assert!(
             !verify_designated(message, &signature, &public_key, &TEST_CHANNEL_KEY),
