@@ -8,6 +8,8 @@ const INPUT_SIZES: &[usize] = &[64, 128, 256, 512, 1024];
 
 // Configure sample size for more accurate measurements (default is ~100)
 // Increase this for more statistical confidence, but benchmarks will take longer
+const SAMPLE_SIZE: usize = 1000;
+
 // ECDSA secp256k1
 use k256::ecdsa::{SigningKey, VerifyingKey, Signature, signature::Signer, signature::Verifier};
 
@@ -56,6 +58,7 @@ fn demo_channel_key(seed: &str) -> ChannelKey {
 // SILMARILS benchmarks
 fn bench_silmarils_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SILMARILS");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -77,6 +80,7 @@ fn bench_silmarils_sign(c: &mut Criterion) {
 
 fn bench_silmarils_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("SILMARILS");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -101,6 +105,7 @@ fn bench_silmarils_verify(c: &mut Criterion) {
 // ECDSA secp256k1 benchmarks
 fn bench_ecdsa_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("ECDSA-secp256k1");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -123,6 +128,7 @@ fn bench_ecdsa_sign(c: &mut Criterion) {
 
 fn bench_ecdsa_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("ECDSA-secp256k1");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -147,6 +153,7 @@ fn bench_ecdsa_verify(c: &mut Criterion) {
 // Dilithium2 (ML-DSA-44) benchmarks
 fn bench_dilithium2_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("Dilithium2-ML-DSA-44");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -167,6 +174,7 @@ fn bench_dilithium2_sign(c: &mut Criterion) {
 
 fn bench_dilithium2_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("Dilithium2-ML-DSA-44");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -189,6 +197,7 @@ fn bench_dilithium2_verify(c: &mut Criterion) {
 // Dilithium3 benchmarks
 fn bench_dilithium3_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("Dilithium3-ML-DSA-65");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -209,6 +218,7 @@ fn bench_dilithium3_sign(c: &mut Criterion) {
 
 fn bench_dilithium3_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("Dilithium3-ML-DSA-65");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -231,6 +241,7 @@ fn bench_dilithium3_verify(c: &mut Criterion) {
 // Falcon-512 benchmarks
 fn bench_falcon512_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("Falcon-512");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -251,6 +262,7 @@ fn bench_falcon512_sign(c: &mut Criterion) {
 
 fn bench_falcon512_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("Falcon-512");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -274,6 +286,7 @@ fn bench_falcon512_verify(c: &mut Criterion) {
 
 fn bench_sphincsplus128s_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128s");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -294,6 +307,7 @@ fn bench_sphincsplus128s_sign(c: &mut Criterion) {
 
 fn bench_sphincsplus128s_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128s");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -316,6 +330,7 @@ fn bench_sphincsplus128s_verify(c: &mut Criterion) {
 // SPHINCS+-128f benchmarks
 fn bench_sphincsplus128f_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128f");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
@@ -336,6 +351,7 @@ fn bench_sphincsplus128f_sign(c: &mut Criterion) {
 
 fn bench_sphincsplus128f_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128f");
+    group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
