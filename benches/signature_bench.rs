@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 // Blockchain-relevant message sizes: 64B (minimal), 128B (small tx), 256B (typical tx), 512B (large tx)
 const INPUT_SIZES: &[usize] = &[64, 128, 256, 512, 1024];
 
+// Configure sample size for more accurate measurements (default is ~100)
+// Increase this for more statistical confidence, but benchmarks will take longer
 // ECDSA secp256k1
 use k256::ecdsa::{SigningKey, VerifyingKey, Signature, signature::Signer, signature::Verifier};
 
@@ -276,14 +278,14 @@ fn bench_falcon512_verify(c: &mut Criterion) {
     group.finish();
 }
 
-// SPHINCS+-128s benchmarks - temporarily commented out
-/*
+// SPHINCS+-128s benchmarks
+
 fn bench_sphincsplus128s_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128s");
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
-        let (public_key, secret_key) = sphincsplus128s_keypair();
+        let (_public_key, secret_key) = sphincsplus128s_keypair();
         
         group.bench_with_input(
             BenchmarkId::new("sign", size),
@@ -308,10 +310,10 @@ fn bench_sphincsplus128s_verify(c: &mut Criterion) {
         
         group.bench_with_input(
             BenchmarkId::new("verify", size),
-            &(&message, &signature, &public_key),
-            |b, (msg, sig, pk)| {
+            &(&signature, &public_key),
+            |b, (sig, pk)| {
                 b.iter(|| {
-                    sphincsplus128s_verify(black_box(sig), black_box(msg), black_box(pk))
+                    sphincsplus128s_verify(black_box(sig), black_box(pk))
                 });
             },
         );
@@ -325,7 +327,7 @@ fn bench_sphincsplus128f_sign(c: &mut Criterion) {
     
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
-        let (public_key, secret_key) = sphincsplus128f_keypair();
+        let (_public_key, secret_key) = sphincsplus128f_keypair();
         
         group.bench_with_input(
             BenchmarkId::new("sign", size),
@@ -350,17 +352,16 @@ fn bench_sphincsplus128f_verify(c: &mut Criterion) {
         
         group.bench_with_input(
             BenchmarkId::new("verify", size),
-            &(&message, &signature, &public_key),
-            |b, (msg, sig, pk)| {
+            &(&signature, &public_key),
+            |b, ( sig, pk)| {
                 b.iter(|| {
-                    sphincsplus128f_verify(black_box(sig), black_box(msg), black_box(pk))
+                    sphincsplus128f_verify(black_box(sig), black_box(pk))
                 });
             },
         );
     }
     group.finish();
 }
-*/
 
 criterion_group!(
     benches,
@@ -373,11 +374,10 @@ criterion_group!(
     bench_dilithium3_sign,
     bench_dilithium3_verify,
     bench_falcon512_sign,
-    bench_falcon512_verify
-    // SPHINCS+ benchmarks temporarily disabled - uncomment when module names are confirmed
-    // bench_sphincsplus128s_sign,
-    // bench_sphincsplus128s_verify,
-    // bench_sphincsplus128f_sign,
-    // bench_sphincsplus128f_verify
+    bench_falcon512_verify,
+    bench_sphincsplus128s_sign,
+    bench_sphincsplus128s_verify,
+    bench_sphincsplus128f_sign,
+    bench_sphincsplus128f_verify
 );
 criterion_main!(benches);
