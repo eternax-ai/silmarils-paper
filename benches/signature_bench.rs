@@ -27,25 +27,17 @@ use pqcrypto_falcon::falcon512::{
     detached_sign as falcon512_sign,
     verify_detached_signature as falcon512_verify,
 };
-// SPHINCS+ modules - temporarily commented out until correct module names are confirmed
-// The module structure in pqcrypto-sphincsplus 0.5 may differ from expected
-// Try these alternatives if the above don't work:
-// - sphincssha2_128f_simple
-// - sphincs_sha2_128f_simple  
-// - sphincssha2128fsimple (with underscores)
-// TODO: Verify correct module names for version 0.5 by checking crate docs
-/*
-use pqcrypto_sphincsplus::sphincssha2128fsimple::{
+use pqcrypto_sphincsplus::sphincssha256128fsimple::{
     keypair as sphincsplus128f_keypair,
     sign as sphincsplus128f_sign,
-    verify as sphincsplus128f_verify,
+    open as sphincsplus128f_verify,
 };
-use pqcrypto_sphincsplus::sphincssha2128ssimple::{
+use pqcrypto_sphincsplus::sphincssha256128ssimple::{
     keypair as sphincsplus128s_keypair,
     sign as sphincsplus128s_sign,
-    verify as sphincsplus128s_verify,
+    open as sphincsplus128s_verify,
 };
-*/
+
 
 fn generate_test_message(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 256) as u8).collect()
