@@ -26,7 +26,6 @@ pub struct Signature {
     pub sigma_2: Fr,
     pub sigma_3: Fr,
     pub sigma_4: Fr,
-    pub sigma_5: Fr,
 }
 
 pub fn derive_private_key(seed: &str) -> PrivateKey {
@@ -61,7 +60,7 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
     // Derive the public key (w0, w1) from the private key with HKDF
     let private_key_bytes = private_key.into_bigint().to_bytes_be();
     
-    let hk = Hkdf::<Sha256>::new(None, &private_key_bytes);
+    let hk = Hkdf::<Sha256>::new(Some(b"pk-params"), &private_key_bytes);
     let mut okm = [0u8; 64];
     hk.expand(b"it-sig-public-key", &mut okm).expect("HKDF expand failed");
     
@@ -128,29 +127,25 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     let evaluation_points = vec![public_key.w0, public_key.w1];
     let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points.clone(), &mut rng);
     
-    // Generate 4 random numbers in Fp: alpha, beta, b, d_prime
+    // Generate 3 random numbers in Fp: alpha, beta, d
     let alpha = Fr::rand(&mut rng);
     let beta = Fr::rand(&mut rng);
-    let b = Fr::rand(&mut rng);
     let d = Fr::rand(&mut rng);
 
     let epsilon = alpha * beta;
     // Reuse existing RNG instead of creating new one
     let epsilon_shares = split(epsilon, 2, 2, evaluation_points, &mut rng);
 
-    
-    let sigma_1 = b * (per_message_key_fp - hash_fp);
-    let sigma_2 = d/b;
-    let sigma_3 = key_shares.1.y * d;
-    let sigma_4 = epsilon_shares[1].y * d/epsilon;
-    let sigma_5 = d * (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon);
+    let sigma_1 = d*(per_message_key_fp - hash_fp);
+    let sigma_2 = key_shares.1.y * d;
+    let sigma_3 = epsilon_shares[1].y * d/epsilon;
+    let sigma_4 = d * (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon);
 
     Signature {
         sigma_1,
         sigma_2,
         sigma_3,
         sigma_4,
-        sigma_5,
     }
 }
 
@@ -167,9 +162,9 @@ pub fn verify_unauthenticated(
     let hash = hasher.finalize();
     let r: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
 
-    let v_0 = signature.sigma_1 * signature.sigma_2 - signature.sigma_5;
-    let v_1 = signature.sigma_1 * signature.sigma_2 - signature.sigma_3
-        + r * signature.sigma_4;
+    let v_0 = signature.sigma_1 - signature.sigma_4;
+    let v_1 = signature.sigma_1 - signature.sigma_2
+        + r * signature.sigma_3;
 
     let v_0_share = Share {
         x: public_key.w0,
@@ -184,18 +179,17 @@ pub fn verify_unauthenticated(
 }
 
 /// Core verification against a precomputed r value.
-/// Rejects signatures with sigma_4 = 0 to prevent the algebraic bypass where
-/// setting sigma_4 = 0 eliminates r from the verification equation entirely,
+/// Rejects signatures with sigma_3 = 0 to prevent the algebraic bypass where
+/// setting sigma_3 = 0 eliminates r from the verification equation entirely,
 /// allowing forgery without knowledge of the channel secret.
 fn verify_inner(r: Fr, signature: &Signature, public_key: &PublicKey) -> bool {
-    if signature.sigma_1 == Fr::ZERO || signature.sigma_4 == Fr::ZERO {
+    if signature.sigma_3 == Fr::ZERO {
         return false;
     }
 
-    // Cache sigma_1 * sigma_2 to avoid redundant multiplication
-    let sigma_1_sigma_2 = signature.sigma_1 * signature.sigma_2;
-    let v_0 = sigma_1_sigma_2 - signature.sigma_5;
-    let v_1 = sigma_1_sigma_2 - signature.sigma_3 + r * signature.sigma_4;
+    let v_0 = signature.sigma_1 - signature.sigma_4;
+    let v_1 = signature.sigma_1 - signature.sigma_2
+        + r * signature.sigma_3;
 
     let v_0_share = Share {
         x: public_key.w0,
@@ -256,12 +250,11 @@ pub fn forge_signature(
     // Choose arbitrary values for σ'_1, σ'_2, σ'_3, σ'_4
     // In a real attack, these could be chosen strategically
     let sigma_1_prime = original_signature.sigma_1 + Fr::from(1u64);
-    let sigma_2_prime = original_signature.sigma_2 + Fr::from(2u64);
-    let sigma_3_prime = original_signature.sigma_3 + Fr::from(3u64);
-    let sigma_4_prime = original_signature.sigma_4 + Fr::from(4u64);
+    let sigma_2_prime = original_signature.sigma_2 + Fr::from(3u64);
+    let sigma_3_prime = original_signature.sigma_3 + Fr::from(4u64);
 
     // Compute V'₁ = σ'_1σ'_2 - (P + σ'_3) + r'σ'_4
-    let v_1_prime = sigma_1_prime * sigma_2_prime - sigma_3_prime + r_prime * sigma_4_prime;
+    let v_1_prime = sigma_1_prime - sigma_2_prime + r_prime * sigma_3_prime;
 
     // With shares at x=1 and x=2, Lagrange interpolation gives:
     // L₁(0) = (0-2)/(1-2) = 2
@@ -280,14 +273,13 @@ pub fn forge_signature(
     //
     // Using the attack formula: σ'_5 = σ'_1σ'_2 - V'_1*w'_0/w'_1
     // where w'_0=1 and w'_1=2 are the Lagrange coefficients
-    let sigma_5_prime = sigma_1_prime * sigma_2_prime - (v_1_prime * public_key.w0) / public_key.w1;
+    let sigma_4_prime = sigma_1_prime - (v_1_prime * public_key.w0) / public_key.w1;
 
     Signature {
         sigma_1: sigma_1_prime,
         sigma_2: sigma_2_prime,
         sigma_3: sigma_3_prime,
         sigma_4: sigma_4_prime,
-        sigma_5: sigma_5_prime,
     }
 }
 
@@ -572,17 +564,15 @@ mod tests {
         // Attacker picks arbitrary σ₁, σ₂, σ₃ and sets σ₄ = 0.
         // Verification equation reduces to: σ₁σ₂ + σ₃ - 2σ₅ = 0
         let sigma_1 = Fr::from(7u64);
-        let sigma_2 = Fr::from(11u64);
-        let sigma_3 = Fr::from(13u64);
-        let sigma_4 = Fr::ZERO;
-        let sigma_5 = (sigma_1 * sigma_2 + sigma_3) / Fr::from(2u64);
+        let sigma_2 = Fr::from(13u64);
+        let sigma_3 = Fr::ZERO;
+        let sigma_4 = (sigma_1 + sigma_2) / Fr::from(2u64);
 
         let forged = Signature {
             sigma_1,
             sigma_2,
             sigma_3,
             sigma_4,
-            sigma_5,
         };
 
         assert!(
