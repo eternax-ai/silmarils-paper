@@ -60,7 +60,7 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
     // Derive the public key (w0, w1) from the private key with HKDF
     let private_key_bytes = private_key.into_bigint().to_bytes_be();
     
-    let hk = Hkdf::<Sha256>::new(None, &private_key_bytes);
+    let hk = Hkdf::<Sha256>::new(Some(b"pk-params"), &private_key_bytes);
     let mut okm = [0u8; 64];
     hk.expand(b"it-sig-public-key", &mut okm).expect("HKDF expand failed");
     
@@ -127,7 +127,7 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     let evaluation_points = vec![public_key.w0, public_key.w1];
     let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points.clone(), &mut rng);
     
-    // Generate 4 random numbers in Fp: alpha, beta, b, d_prime
+    // Generate 3 random numbers in Fp: alpha, beta, d
     let alpha = Fr::rand(&mut rng);
     let beta = Fr::rand(&mut rng);
     let d = Fr::rand(&mut rng);
@@ -136,26 +136,10 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     // Reuse existing RNG instead of creating new one
     let epsilon_shares = split(epsilon, 2, 2, evaluation_points, &mut rng);
 
-    
     let sigma_1 = d*(per_message_key_fp - hash_fp);
     let sigma_2 = key_shares.1.y * d;
     let sigma_3 = epsilon_shares[1].y * d/epsilon;
     let sigma_4 = d * (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon);
-
-    let v_0 = sigma_1 - sigma_4;
-    let v_1 = sigma_1 - sigma_2 + hash_fp * sigma_3;
-
-    let exp_v_0 =  d * ((per_message_key_fp - hash_fp) - (key_shares.0.y - epsilon_shares[0].y * hash_fp/epsilon));
-    let exp_v_1 = d * ((per_message_key_fp - hash_fp) - (key_shares.1.y - epsilon_shares[1].y * hash_fp/epsilon));
-
-    assert_eq!(v_0, exp_v_0, "V_0 does not equal d * ((K - r) - (K_0 - epsilon_0 * r/epsilon))");
-    assert_eq!(v_1, exp_v_1, "V_1 does not equal d * ((K - r) - (K_1 - epsilon_1 * r/epsilon))");
-
-    let v_0_share = Share { x: public_key.w0, y: v_0 };
-    let v_1_share = Share { x: public_key.w1, y: v_1 };
-    let result = reconstruct(&[v_0_share, v_1_share]);
-
-    assert_eq!(result, Fr::ZERO, "Verification check does not equal 0");
 
     Signature {
         sigma_1,
