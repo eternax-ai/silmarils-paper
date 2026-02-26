@@ -4,12 +4,22 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ark-ff = "0.4"
-ark-std = "0.4"
-ark-bn254 = "0.4"
+ark-ff = "0.5"
+ark-secp256k1 = "0.5"
 rand = "0.8"
 rand_chacha = "0.3"
 hex = "0.4"
 sha2 = "0.10"
 hmac = "0.12"
 hkdf = "0.12"
+k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
+pqcrypto-dilithium = "0.5"
+pqcrypto-falcon = "0.4.1"
+pqcrypto-sphincsplus = "0.5.3"
+
+[[bench]]
+name = "signature_bench"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }

@@ -1,5 +1,5 @@
-use ark_bn254::Fr;
-use ark_ff::{Field, UniformRand};
+use ark_secp256k1::Fr;
+use ark_ff::{AdditiveGroup, Field, UniformRand};
 use rand::RngCore;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -23,3 +23,9 @@ target
 ## Cursor
 .cursor/
 AGENTS.md
+
+## Local files
+*.pdf
+*.png
+scripts/
+docs/

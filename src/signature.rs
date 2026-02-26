@@ -1,5 +1,5 @@
-use ark_bn254::Fr;
-use ark_ff::{BigInteger, Field, PrimeField, UniformRand};
+use ark_secp256k1::Fr;
+use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
@@ -48,19 +48,12 @@ pub fn derive_private_key(seed: &str) -> PrivateKey {
     // Initialize RNG from seed
     let mut rng = ChaChaRng::from_seed(seed_array);
 
-    // Generate a random number in Fr
-    // Fr in BN254 curve uses a 254-bit prime, which is close to 2^256
+    // Generate a random number in secp256k1 scalar field
     Fr::rand(&mut rng)
 }
 
-fn derive_private_key_shares(private_key: &PrivateKey, evaluation_points: Vec<Fr>) -> (Share, Share) {
-    let mut hasher = Sha256::new();
-    hasher.update(private_key.into_bigint().to_bytes_be());
-    let hash = hasher.finalize();
-    
-    let mut rng = ChaChaRng::from_seed(hash.into());
-    let shares = split(*private_key, 2, 2, evaluation_points, &mut rng);
-
+fn derive_private_key_shares(private_key: &PrivateKey, evaluation_points: Vec<Fr>, rng: &mut impl rand::RngCore) -> (Share, Share) {
+    let shares = split(*private_key, 2, 2, evaluation_points, rng);
     (shares[0].clone(), shares[1].clone())
 }
 
@@ -76,10 +69,14 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
     let w0_bytes = &okm[0..32];
     let w1_bytes = &okm[32..64];
     
-    PublicKey {
-        w0: Fr::from_be_bytes_mod_order(w0_bytes),
-        w1: Fr::from_be_bytes_mod_order(w1_bytes),
-    }
+    let w0 = Fr::from_be_bytes_mod_order(w0_bytes);
+    let w1 = Fr::from_be_bytes_mod_order(w1_bytes);
+
+    assert!(w0 != Fr::ZERO, "Evaluation point w0 must be non-zero");
+    assert!(w1 != Fr::ZERO, "Evaluation point w1 must be non-zero");
+    assert!(w0 != w1, "Evaluation points w0 and w1 must be distinct");
+
+    PublicKey { w0, w1 }
 }
 
 /// Compute the per-pair secret nonce: n_ephemeral = HMAC_{k_ephemeral}(M).
@@ -88,6 +85,7 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
 fn compute_nonce(channel_key: &ChannelKey, message: &[u8]) -> Fr {
     let mut mac =
         <Hmac<Sha256>>::new_from_slice(channel_key).expect("HMAC accepts any key length");
+    mac.update(b"silmarils-nonce");
     mac.update(message);
     let result = mac.finalize().into_bytes();
     Fr::from_be_bytes_mod_order(&result)
@@ -120,16 +118,15 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     let hash_fp = compute_receipt_hash(message, &nonce);
     
     let mut rng = OsRng;
-    // Cache private key bytes conversion (used for HMAC)
     let private_key_bytes = private_key.into_bigint().to_bytes_be();
     let mut mac = <Hmac<Sha256>>::new_from_slice(&private_key_bytes).expect("HMAC accepts any key length");
+    mac.update(b"silmarils-pmk");
     mac.update(message);
     let per_message_key = mac.finalize().into_bytes();
     let per_message_key_fp = Fr::from_be_bytes_mod_order(&per_message_key);
     
-    // Reuse evaluation_points vector
     let evaluation_points = vec![public_key.w0, public_key.w1];
-    let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points.clone());
+    let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points.clone(), &mut rng);
     
     // Generate 4 random numbers in Fp: alpha, beta, b, d_prime
     let alpha = Fr::rand(&mut rng);
@@ -191,7 +188,7 @@ pub fn verify_unauthenticated(
 /// setting sigma_4 = 0 eliminates r from the verification equation entirely,
 /// allowing forgery without knowledge of the channel secret.
 fn verify_inner(r: Fr, signature: &Signature, public_key: &PublicKey) -> bool {
-    if signature.sigma_4 == Fr::ZERO {
+    if signature.sigma_1 == Fr::ZERO || signature.sigma_4 == Fr::ZERO {
         return false;
     }
 
@@ -306,7 +303,7 @@ mod tests {
         let key1 = derive_private_key(seed);
         let key2 = derive_private_key(seed);
 
-        assert_eq!(key1.0, key2.0, "Private key should be deterministic");
+        assert_eq!(key1, key2, "Private key should be deterministic");
     }
 
     #[test]
@@ -457,7 +454,7 @@ mod tests {
         let message = b"test message";
 
         let mut signature = sign(message, &private_key, &TEST_CHANNEL_KEY);
-        signature.sigma_1 = signature.sigma_1 + Fr::ONE;
+        signature.sigma_1 = signature.sigma_1 + Fr::from(1u64);
 
         assert!(
             !verify_designated(message, &signature, &public_key, &TEST_CHANNEL_KEY),
