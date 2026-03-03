@@ -21,5 +21,11 @@ pqcrypto-sphincsplus = "0.5.3"
 name = "signature_bench"
 harness = false
 
+[[bench]]
+name = "field_bench"
+harness = false
+
 [dev-dependencies]
+blstrs = "0.7.1"
 criterion = { version = "0.5", features = ["html_reports"] }
+ff = "0.13"
