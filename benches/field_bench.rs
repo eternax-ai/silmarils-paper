@@ -1,15 +1,17 @@
-//! Field arithmetic benchmark: arkworks secp256k1::Fr  vs  blst BLS12-381 Fr
+//! Field arithmetic and hashing benchmark
 //!
-//! arkworks  –  secp256k1 scalar field (256-bit prime)
-//!   r = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
-//! blst      –  BLS12-381 scalar field (255-bit prime, hand-written assembly)
-//!   r = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001
+//! Field arithmetic: arkworks secp256k1::Fr  vs  blst BLS12-381 Fr
+//!   arkworks  –  secp256k1 scalar field (256-bit prime)
+//!   blst      –  BLS12-381 scalar field (255-bit prime, hand-written assembly)
+//!
+//! Hashing: SHA-256  vs  blake3
 //!
 //! Benchmarks:
 //!   field-add      – 1000× chained additions  (amortises call overhead)
 //!   field-mul      – 1000× chained multiplications
 //!   field-inv      – single modular inversion  (Fermat / Euclidean)
 //!   lagrange-2pt   – 2-point Lagrange interpolation, the core of SILMARILS verify
+//!   hash           – single hash of a 256-byte message (SHA-256 vs blake3)
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
@@ -18,6 +20,8 @@ use ark_secp256k1::Fr as ArkFr;
 
 use blstrs::Scalar as BlstFr;
 use ff::Field as FfField;
+
+use sha2::{Digest, Sha256};
 
 use rand::SeedableRng;
 use rand_chacha::ChaChaRng;
@@ -174,5 +178,23 @@ fn bench_lagrange(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_add, bench_mul, bench_inv, bench_lagrange);
+fn bench_hash(c: &mut Criterion) {
+    // 256 bytes — the "typical tx" size used in signature_bench
+    let msg: Vec<u8> = (0..256usize).map(|i| i as u8).collect();
+
+    let mut group = c.benchmark_group("hash");
+    group.sample_size(200);
+
+    group.bench_function("sha2/SHA-256", |b| {
+        b.iter(|| Sha256::digest(black_box(&msg)))
+    });
+
+    group.bench_function("blake3", |b| {
+        b.iter(|| blake3::hash(black_box(&msg)))
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_add, bench_mul, bench_inv, bench_lagrange, bench_hash);
 criterion_main!(benches);

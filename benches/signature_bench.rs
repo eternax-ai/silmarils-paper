@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use it_sig::signature::{sign, verify_designated, derive_private_key, derive_public_key, ChannelKey};
 use rand::rngs::OsRng;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256}; // kept for ECDSA message digest only
 
 // Blockchain-relevant message sizes: 64B (minimal), 128B (small tx), 256B (typical tx), 512B (large tx)
 const INPUT_SIZES: &[usize] = &[64, 128, 256, 512, 1024];
@@ -46,13 +46,10 @@ fn generate_test_message(size: usize) -> Vec<u8> {
 }
 
 fn demo_channel_key(seed: &str) -> ChannelKey {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"channel-key-derivation:");
     hasher.update(seed.as_bytes());
-    let hash = hasher.finalize();
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&hash);
-    key
+    *hasher.finalize().as_bytes()
 }
 
 // SILMARILS benchmarks

@@ -2,7 +2,6 @@ mod shamir;
 mod signature;
 
 use ark_ff::{BigInteger, PrimeField};
-use sha2::{Digest, Sha256};
 use signature::{
     compute_receipt, derive_private_key, derive_public_key, forge_signature, sign,
     verify_designated, verify_unauthenticated, verify_with_receipt, ChannelKey,
@@ -11,13 +10,10 @@ use std::io::{self, Write};
 
 /// Derive a demo channel key from a seed (in production this comes from TLS).
 fn demo_channel_key(seed: &str) -> ChannelKey {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"channel-key-derivation:");
     hasher.update(seed.as_bytes());
-    let hash = hasher.finalize();
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&hash);
-    key
+    *hasher.finalize().as_bytes()
 }
 
 fn main() {
@@ -77,7 +73,7 @@ fn main() {
 
     println!("\n\nALGEBRAIC FORGERY ATTACK DEMONSTRATION (should fail)");
     println!("====================================================\n");
-    println!("The attacker uses r' = H(M') but the verifier uses r' = H(M', HMAC_k(M')).");
+    println!("The attacker uses r' = Blake3(M') but the verifier uses r' = Blake3-keyed(k, nonce || M').");
     println!("The mismatch causes verification to fail.\n");
 
     print!("Enter a message to forge (different from original): ");

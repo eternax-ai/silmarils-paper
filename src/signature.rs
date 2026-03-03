@@ -1,11 +1,8 @@
 use ark_secp256k1::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
-use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
 use rand::SeedableRng;
 use rand_chacha::ChaChaRng;
-use sha2::{Digest, Sha256};
 
 use crate::shamir::{reconstruct, split, Share};
 
@@ -60,9 +57,11 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
     // Derive the public key (w0, w1) from the private key with HKDF
     let private_key_bytes = private_key.into_bigint().to_bytes_be();
     
-    let hk = Hkdf::<Sha256>::new(Some(b"pk-params"), &private_key_bytes);
     let mut okm = [0u8; 64];
-    hk.expand(b"it-sig-public-key", &mut okm).expect("HKDF expand failed");
+    let mut reader = blake3::Hasher::new_derive_key("it-sig public-key")
+        .update(&private_key_bytes)
+        .finalize_xof();
+    reader.fill(&mut okm);
     
     // Split the output into two 32-byte chunks and convert to Fr
     let w0_bytes = &okm[0..32];
@@ -78,26 +77,23 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
     PublicKey { w0, w1 }
 }
 
-/// Compute the per-pair secret nonce: n_ephemeral = HMAC_{k_ephemeral}(M).
+/// Compute the per-pair secret nonce: n_ephemeral = Blake3-keyed(k_channel, "silmarils-nonce" || M).
 /// This nonce is never transmitted and remains information-theoretically hidden
 /// from both P2 (holder) and any external adversary.
 fn compute_nonce(channel_key: &ChannelKey, message: &[u8]) -> Fr {
-    let mut mac =
-        <Hmac<Sha256>>::new_from_slice(channel_key).expect("HMAC accepts any key length");
-    mac.update(b"silmarils-nonce");
-    mac.update(message);
-    let result = mac.finalize().into_bytes();
-    Fr::from_be_bytes_mod_order(&result)
+    let mut hasher = blake3::Hasher::new_keyed(channel_key);
+    hasher.update(b"silmarils-nonce");
+    hasher.update(message);
+    Fr::from_be_bytes_mod_order(hasher.finalize().as_bytes())
 }
 
 /// Compute r = H(M, n_ephemeral). The nonce binds r to the channel secret,
 /// making it information-theoretically hidden from anyone without k_ephemeral.
 fn compute_receipt_hash(message: &[u8], nonce: &Fr) -> Fr {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(message);
-    hasher.update(nonce.into_bigint().to_bytes_be());
-    let hash = hasher.finalize();
-    Fr::from_be_bytes_mod_order(&hash)
+    hasher.update(&nonce.into_bigint().to_bytes_be());
+    Fr::from_be_bytes_mod_order(hasher.finalize().as_bytes())
 }
 
 /// Compute the transferable receipt r = H(M, n_ephemeral).
@@ -118,11 +114,11 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     
     let mut rng = OsRng;
     let private_key_bytes = private_key.into_bigint().to_bytes_be();
-    let mut mac = <Hmac<Sha256>>::new_from_slice(&private_key_bytes).expect("HMAC accepts any key length");
-    mac.update(b"silmarils-pmk");
-    mac.update(message);
-    let per_message_key = mac.finalize().into_bytes();
-    let per_message_key_fp = Fr::from_be_bytes_mod_order(&per_message_key);
+    let pk_arr: &[u8; 32] = private_key_bytes.as_slice().try_into().expect("secp256k1 scalar is 32 bytes");
+    let mut hasher = blake3::Hasher::new_keyed(pk_arr);
+    hasher.update(b"silmarils-pmk");
+    hasher.update(message);
+    let per_message_key_fp = Fr::from_be_bytes_mod_order(hasher.finalize().as_bytes());
     
     let evaluation_points = vec![public_key.w0, public_key.w1];
     let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points.clone(), &mut rng);
@@ -157,10 +153,7 @@ pub fn verify_unauthenticated(
     signature: &Signature,
     public_key: &PublicKey,
 ) -> bool {
-    let mut hasher = Sha256::new();
-    hasher.update(message);
-    let hash = hasher.finalize();
-    let r: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
+    let r: Fr = Fr::from_be_bytes_mod_order(blake3::hash(message).as_bytes());
 
     let v_0 = signature.sigma_1 - signature.sigma_4;
     let v_1 = signature.sigma_1 - signature.sigma_2
@@ -241,11 +234,7 @@ pub fn forge_signature(
     new_message: &[u8],
     public_key: &PublicKey,
 ) -> Signature {
-    // Compute r' = H(M')
-    let mut hasher = Sha256::new();
-    hasher.update(new_message);
-    let hash = hasher.finalize();
-    let r_prime: Fr = Fr::from_be_bytes_mod_order(&hash[..]);
+    let r_prime: Fr = Fr::from_be_bytes_mod_order(blake3::hash(new_message).as_bytes());
 
     // Choose arbitrary values for σ'_1, σ'_2, σ'_3, σ'_4
     // In a real attack, these could be chosen strategically
