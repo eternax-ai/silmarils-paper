@@ -1,14 +1,14 @@
-use ark_secp256k1::Fr;
+use ark_secp256k1::Fq;
 use ark_ff::{AdditiveGroup, Field, UniformRand};
 use rand::RngCore;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Share {
-    pub x: Fr,
-    pub y: Fr,
+    pub x: Fq,
+    pub y: Fq,
 }
 
-pub fn split(secret: Fr, threshold: usize, num_shares: usize, evaluation_points: Vec<Fr>, rng: &mut dyn RngCore) -> Vec<Share> {
+pub fn split(secret: Fq, threshold: usize, num_shares: usize, evaluation_points: Vec<Fq>, rng: &mut dyn RngCore) -> Vec<Share> {
     if threshold < 1 {
         panic!("Threshold must be at least 1");
     }
@@ -22,7 +22,7 @@ pub fn split(secret: Fr, threshold: usize, num_shares: usize, evaluation_points:
     // Generate random coefficients for polynomial f(x) = secret + a1*x + ... + a_{k-1}*x^{k-1}
     let mut coefficients = vec![secret];
     for _ in 1..threshold {
-        coefficients.push(Fr::rand(rng));
+        coefficients.push(Fq::rand(rng));
     }
 
     // Generate shares by evaluating polynomial at the provided x values
@@ -35,18 +35,18 @@ pub fn split(secret: Fr, threshold: usize, num_shares: usize, evaluation_points:
     shares
 }
 
-pub fn reconstruct(shares: &[Share]) -> Fr {
+pub fn reconstruct(shares: &[Share]) -> Fq {
     if shares.is_empty() {
         panic!("Cannot reconstruct from empty shares");
     }
 
     // Use Lagrange interpolation to compute f(0)
-    let zero = Fr::ZERO;
-    let mut secret = Fr::ZERO;
+    let zero = Fq::ZERO;
+    let mut secret = Fq::ZERO;
 
     for (i, share_i) in shares.iter().enumerate() {
-        let mut numerator = Fr::ONE;
-        let mut denominator = Fr::ONE;
+        let mut numerator = Fq::ONE;
+        let mut denominator = Fq::ONE;
 
         for (j, share_j) in shares.iter().enumerate() {
             if i != j {
@@ -62,9 +62,9 @@ pub fn reconstruct(shares: &[Share]) -> Fr {
     secret
 }
 
-fn evaluate_polynomial(coefficients: &[Fr], x: Fr) -> Fr {
+fn evaluate_polynomial(coefficients: &[Fq], x: Fq) -> Fq {
     // Horner's method: f(x) = a0 + x*(a1 + x*(a2 + ...))
-    let mut result = Fr::ZERO;
+    let mut result = Fq::ZERO;
     for &coeff in coefficients.iter().rev() {
         result = result * x + coeff;
     }
@@ -80,8 +80,8 @@ mod tests {
     #[test]
     fn test_shamir_basic() {
         let mut rng = ChaChaRng::from_seed([0u8; 32]);
-        let secret = Fr::from(42u64);
-        let evaluation_points = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64), Fr::from(4u64), Fr::from(5u64)];
+        let secret = Fq::from(42u64);
+        let evaluation_points = vec![Fq::from(1u64), Fq::from(2u64), Fq::from(3u64), Fq::from(4u64), Fq::from(5u64)];
 
         let shares = split(secret, 3, 5, evaluation_points, &mut rng);
         assert_eq!(shares.len(), 5);
@@ -98,8 +98,8 @@ mod tests {
     #[test]
     fn test_shamir_2_of_2() {
         let mut rng = ChaChaRng::from_seed([0u8; 32]);
-        let secret = Fr::from(42u64);
-        let evaluation_points = vec![Fr::from(1u64), Fr::from(2u64)];
+        let secret = Fq::from(42u64);
+        let evaluation_points = vec![Fq::from(1u64), Fq::from(2u64)];
 
         let shares = split(secret, 2, 2, evaluation_points, &mut rng);
         assert_eq!(shares.len(), 2);
@@ -111,8 +111,8 @@ mod tests {
     #[test]
     fn test_shamir_different_combinations() {
         let mut rng = ChaChaRng::from_seed([1u8; 32]);
-        let secret = Fr::rand(&mut rng);
-        let evaluation_points = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64), Fr::from(4u64), Fr::from(5u64)];
+        let secret = Fq::rand(&mut rng);
+        let evaluation_points = vec![Fq::from(1u64), Fq::from(2u64), Fq::from(3u64), Fq::from(4u64), Fq::from(5u64)];
 
         let shares = split(secret, 3, 5, evaluation_points, &mut rng);
 
