@@ -62,7 +62,7 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
     
     let hk = Hkdf::<Sha256>::new(Some(b"pk-params"), &private_key_bytes);
     let mut okm = [0u8; 64];
-    hk.expand(b"it-sig-public-key", &mut okm).expect("HKDF expand failed");
+    hk.expand(b"silmarils-public-key", &mut okm).expect("HKDF expand failed");
     
     // Split the output into two 32-byte chunks and convert to Fq
     let w0_bytes = &okm[0..32];
@@ -127,7 +127,7 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     let evaluation_points = vec![public_key.w0, public_key.w1];
     let key_shares = derive_private_key_shares(&per_message_key_fp, evaluation_points.clone(), &mut rng);
     
-    // Generate 3 random numbers in Fp: alpha, beta, d
+    // Generate 3 random numbers in F: alpha, beta, d
     let alpha = Fq::rand(&mut rng);
     let beta = Fq::rand(&mut rng);
     let d = Fq::rand(&mut rng);
@@ -147,35 +147,6 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
         sigma_3,
         sigma_4,
     }
-}
-
-/// Unauthenticated verification using r = H(M).
-/// Retained to demonstrate that the algebraic forgery attack succeeds without
-/// the nonce upgrade. Do NOT use in production.
-pub fn verify_unauthenticated(
-    message: &[u8],
-    signature: &Signature,
-    public_key: &PublicKey,
-) -> bool {
-    let mut hasher = Sha256::new();
-    hasher.update(message);
-    let hash = hasher.finalize();
-    let r: Fq = Fq::from_be_bytes_mod_order(&hash[..]);
-
-    let v_0 = signature.sigma_1 - signature.sigma_4;
-    let v_1 = signature.sigma_1 - signature.sigma_2
-        + r * signature.sigma_3;
-
-    let v_0_share = Share {
-        x: public_key.w0,
-        y: v_0,
-    };
-    let v_1_share = Share {
-        x: public_key.w1,
-        y: v_1,
-    };
-
-    reconstruct(&[v_0_share, v_1_share]) == Fq::ZERO
 }
 
 /// Core verification against a precomputed r value.
@@ -230,8 +201,39 @@ pub fn verify_with_receipt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_secp256k1::Fq;
+    use crate::shamir::{reconstruct, Share};
+    use sha2::{Digest, Sha256};
 
     const TEST_CHANNEL_KEY: ChannelKey = [0xABu8; 32];
+
+    /// Unauthenticated verification using r = H(M).
+    /// Retained to demonstrate that the algebraic forgery attack succeeds without
+    /// the nonce. Do NOT use in production.
+    fn verify_unauthenticated(
+        message: &[u8],
+        signature: &Signature,
+        public_key: &PublicKey,
+    ) -> bool {
+        let mut hasher = Sha256::new();
+        hasher.update(message);
+        let hash = hasher.finalize();
+        let r: Fq = Fq::from_be_bytes_mod_order(&hash[..]);
+
+        let v_0 = signature.sigma_1 - signature.sigma_4;
+        let v_1 = signature.sigma_1 - signature.sigma_2 + r * signature.sigma_3;
+
+        let v_0_share = Share {
+            x: public_key.w0,
+            y: v_0,
+        };
+        let v_1_share = Share {
+            x: public_key.w1,
+            y: v_1,
+        };
+
+        reconstruct(&[v_0_share, v_1_share]) == Fq::ZERO
+    }
 
     #[test]
     fn test_derive_private_key_deterministic() {
