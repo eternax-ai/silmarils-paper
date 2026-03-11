@@ -4,8 +4,8 @@ mod signature;
 use ark_ff::{BigInteger, PrimeField};
 use sha2::{Digest, Sha256};
 use signature::{
-    compute_receipt, derive_private_key, derive_public_key, forge_signature, sign,
-    verify_designated, verify_unauthenticated, verify_with_receipt, ChannelKey,
+    compute_receipt, derive_private_key, derive_public_key, sign,
+    verify_designated, verify_with_receipt, ChannelKey,
 };
 use std::io::{self, Write};
 
@@ -21,7 +21,7 @@ fn demo_channel_key(seed: &str) -> ChannelKey {
 }
 
 fn main() {
-    println!("Digital Signature Demo");
+    println!("SILMARILS Signature Demo");
     println!("=============================================================\n");
 
     // Ask user for seed value
@@ -75,66 +75,4 @@ fn main() {
     let receipt_valid = verify_with_receipt(&sig, &public_key, receipt);
     println!("Receipt-based third-party check: {}", receipt_valid);
 
-    println!("\n\nALGEBRAIC FORGERY ATTACK DEMONSTRATION (should fail)");
-    println!("====================================================\n");
-    println!("The attacker uses r' = H(M') but the verifier uses r' = H(M', HMAC_k(M')).");
-    println!("The mismatch causes verification to fail.\n");
-
-    print!("Enter a message to forge (different from original): ");
-    io::stdout().flush().expect("Failed to flush stdout");
-
-    let mut forged_message_input = String::new();
-    io::stdin()
-        .read_line(&mut forged_message_input)
-        .expect("Failed to read input");
-    let forged_message_input = forged_message_input.trim();
-
-    if forged_message_input == message_input {
-        println!("Warning: Forged message is the same as original.");
-    }
-
-    let forged_sig = forge_signature(
-        message_input.as_bytes(),
-        &sig,
-        forged_message_input.as_bytes(),
-        &public_key,
-    );
-
-    let forged_unauth = verify_unauthenticated(
-        forged_message_input.as_bytes(),
-        &forged_sig,
-        &public_key,
-    );
-    let forged_designated = verify_designated(
-        forged_message_input.as_bytes(),
-        &forged_sig,
-        &public_key,
-        &channel_key,
-    );
-
-    println!("\nOriginal message: {}", message_input);
-    println!("Forged message: {}", forged_message_input);
-    println!(
-        "\nForged signature: ( {}, {}, {}, {})",
-        forged_sig.sigma_1,
-        forged_sig.sigma_2,
-        forged_sig.sigma_3,
-        forged_sig.sigma_4
-    );
-    println!(
-        "\nUnauthenticated verify (r = H(M)):           {}",
-        forged_unauth
-    );
-    println!(
-        "Designated verify (r = H(M, HMAC_k(M))):     {}",
-        forged_designated
-    );
-
-    if forged_unauth && !forged_designated {
-        println!("\nForgery SUCCEEDS against the old scheme but is DEFEATED by the nonce upgrade.");
-    } else if forged_designated {
-        println!("\nATTACK SUCCESSFUL -- this should not happen with the nonce upgrade.");
-    } else {
-        println!("\nBoth verifications rejected the forgery.");
-    }
 }

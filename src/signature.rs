@@ -227,62 +227,6 @@ pub fn verify_with_receipt(
     verify_inner(receipt, signature, public_key)
 }
 
-/// Demonstrates the algebraic forgery attack on the unauthenticated algorithm.
-///
-/// In the original scheme, r = H(M) is publicly computable. The adversary
-/// picks arbitrary σ'_1, σ'_2, σ'_3, σ'_4 and solves the linear verification equation
-/// for σ'_5. This attack is DEFEATED by the nonce upgrade: with r = H(M, n_channel),
-/// the adversary cannot compute r' for a new message M', making the system of
-/// equations unsolvable. An additional σ'_4 ≠ 0 check prevents the degenerate
-/// case where the attacker eliminates r from the equation entirely.
-pub fn forge_signature(
-    _original_message: &[u8],
-    original_signature: &Signature,
-    new_message: &[u8],
-    public_key: &PublicKey,
-) -> Signature {
-    // Compute r' = H(M')
-    let mut hasher = Sha256::new();
-    hasher.update(new_message);
-    let hash = hasher.finalize();
-    let r_prime: Fq = Fq::from_be_bytes_mod_order(&hash[..]);
-
-    // Choose arbitrary values for σ'_1, σ'_2, σ'_3, σ'_4
-    // In a real attack, these could be chosen strategically
-    let sigma_1_prime = original_signature.sigma_1 + Fq::from(1u64);
-    let sigma_2_prime = original_signature.sigma_2 + Fq::from(3u64);
-    let sigma_3_prime = original_signature.sigma_3 + Fq::from(4u64);
-
-    // Compute V'₁ = σ'_1σ'_2 - (P + σ'_3) + r'σ'_4
-    let v_1_prime = sigma_1_prime - sigma_2_prime + r_prime * sigma_3_prime;
-
-    // With shares at x=1 and x=2, Lagrange interpolation gives:
-    // L₁(0) = (0-2)/(1-2) = 2
-    // L₂(0) = (0-1)/(2-1) = -1
-    // So reconstruction: V' = 2*v'_0 - v'_1
-    //
-    // For verification to pass, we need V' = 0:
-    // 2*v'_0 - v'_1 = 0  =>  v'_1 = 2*v'_0
-    //
-    // Since v'_0 = σ'_1σ'_2 - σ'_5 and v'_1 = σ'_1σ'_2 - (P + σ'_3) + r'σ'_4,
-    // we get: σ'_1σ'_2 - (P + σ'_3) + r'σ'_4 = 2(σ'_1σ'_2 - σ'_5)
-    // Solving for σ'_5:
-    // σ'_5 = σ'_1σ'_2 - v'_1/2
-    // σ'_5 = σ'_1σ'_2 - (σ'_1σ'_2 - (P + σ'_3) + r'σ'_4)/2
-    // σ'_5 = (σ'_1σ'_2 + (P + σ'_3) - r'σ'_4)/2
-    //
-    // Using the attack formula: σ'_5 = σ'_1σ'_2 - V'_1*w'_0/w'_1
-    // where w'_0=1 and w'_1=2 are the Lagrange coefficients
-    let sigma_4_prime = sigma_1_prime - (v_1_prime * public_key.w0) / public_key.w1;
-
-    Signature {
-        sigma_1: sigma_1_prime,
-        sigma_2: sigma_2_prime,
-        sigma_3: sigma_3_prime,
-        sigma_4: sigma_4_prime,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,12 +471,39 @@ mod tests {
 
         let original_signature = sign(original_message, &private_key, &TEST_CHANNEL_KEY);
 
-        let forged_signature = forge_signature(
-            original_message,
-            &original_signature,
-            forged_message,
-            &public_key,
-        );
+        // Demonstrate the algebraic forgery attack on the unauthenticated algorithm.
+        //
+        // In the original scheme, r = H(M) is publicly computable. The adversary
+        // picks arbitrary σ'_1, σ'_2, σ'_3 and solves the linear verification equation
+        // for σ'_4. This attack is DEFEATED by the nonce upgrade: with r = H(M, n_channel),
+        // the adversary cannot compute r' for a new message M', making the system of
+        // equations unsolvable. An additional σ'_3 ≠ 0 check prevents the degenerate
+        // case where the attacker eliminates r from the equation entirely.
+        //
+        // Compute r' = H(M')
+        let mut hasher = Sha256::new();
+        hasher.update(forged_message);
+        let hash = hasher.finalize();
+        let r_prime: Fq = Fq::from_be_bytes_mod_order(&hash[..]);
+
+        // Choose arbitrary values for σ'_1, σ'_2, σ'_3
+        let sigma_1_prime = original_signature.sigma_1 + Fq::from(1u64);
+        let sigma_2_prime = original_signature.sigma_2 + Fq::from(3u64);
+        let sigma_3_prime = original_signature.sigma_3 + Fq::from(4u64);
+
+        // Compute V'₁ = σ'_1σ'_2 - (P + σ'_3) + r'σ'_4
+        let v_1_prime = sigma_1_prime - sigma_2_prime + r_prime * sigma_3_prime;
+
+        // Using the attack formula: σ'_5 = σ'_1σ'_2 - V'_1*w'_0/w'_1
+        // where w'_0=1 and w'_1=2 are the Lagrange coefficients
+        let sigma_4_prime = sigma_1_prime - (v_1_prime * public_key.w0) / public_key.w1;
+
+        let forged_signature = Signature {
+            sigma_1: sigma_1_prime,
+            sigma_2: sigma_2_prime,
+            sigma_3: sigma_3_prime,
+            sigma_4: sigma_4_prime,
+        };
 
         // Unauthenticated verification uses r = H(M') -- the forgery succeeds
         assert!(
