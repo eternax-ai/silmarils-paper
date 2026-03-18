@@ -23,6 +23,7 @@ target
 ## Cursor
 .cursor/
 AGENTS.md
+CLAUDE.md
 
 ## Local files
 *.pdf
