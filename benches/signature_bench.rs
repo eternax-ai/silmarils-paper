@@ -1,7 +1,9 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use silmarils_paper::signature::{sign, verify_designated, derive_private_key, derive_public_key, ChannelKey};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
+use silmarils_paper::signature::{
+    derive_private_key, derive_public_key, sign, verify_designated, ChannelKey,
+};
 
 // Blockchain-relevant message sizes: 64B (minimal), 128B (small tx), 256B (typical tx), 512B (large tx)
 const INPUT_SIZES: &[usize] = &[64, 128, 256, 512, 1024];
@@ -11,35 +13,29 @@ const INPUT_SIZES: &[usize] = &[64, 128, 256, 512, 1024];
 const SAMPLE_SIZE: usize = 1000;
 
 // ECDSA secp256k1
-use k256::ecdsa::{SigningKey, VerifyingKey, Signature, signature::Signer, signature::Verifier};
+use k256::ecdsa::{signature::Signer, signature::Verifier, Signature, SigningKey, VerifyingKey};
 
 // Post-quantum schemes
-use pqcrypto_dilithium::dilithium3::{
-    keypair as dilithium3_keypair,
-    detached_sign as dilithium3_sign,
-    verify_detached_signature as dilithium3_verify,
-};
 use pqcrypto_dilithium::dilithium2::{
-    keypair as dilithium2_keypair,
-    detached_sign as dilithium2_sign,
+    detached_sign as dilithium2_sign, keypair as dilithium2_keypair,
     verify_detached_signature as dilithium2_verify,
 };
+use pqcrypto_dilithium::dilithium3::{
+    detached_sign as dilithium3_sign, keypair as dilithium3_keypair,
+    verify_detached_signature as dilithium3_verify,
+};
 use pqcrypto_falcon::falcon512::{
-    keypair as falcon512_keypair,
-    detached_sign as falcon512_sign,
+    detached_sign as falcon512_sign, keypair as falcon512_keypair,
     verify_detached_signature as falcon512_verify,
 };
 use pqcrypto_sphincsplus::sphincssha256128fsimple::{
-    keypair as sphincsplus128f_keypair,
+    keypair as sphincsplus128f_keypair, open as sphincsplus128f_verify,
     sign as sphincsplus128f_sign,
-    open as sphincsplus128f_verify,
 };
 use pqcrypto_sphincsplus::sphincssha256128ssimple::{
-    keypair as sphincsplus128s_keypair,
+    keypair as sphincsplus128s_keypair, open as sphincsplus128s_verify,
     sign as sphincsplus128s_sign,
-    open as sphincsplus128s_verify,
 };
-
 
 fn generate_test_message(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 256) as u8).collect()
@@ -59,21 +55,15 @@ fn demo_channel_key(seed: &str) -> ChannelKey {
 fn bench_silmarils_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SILMARILS");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let private_key = derive_private_key("bench-seed");
         let channel_key = demo_channel_key("bench-seed");
-        
-        group.bench_with_input(
-            BenchmarkId::new("sign", size),
-            &message,
-            |b, msg| {
-                b.iter(|| {
-                    sign(black_box(msg), &private_key, &channel_key)
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("sign", size), &message, |b, msg| {
+            b.iter(|| sign(black_box(msg), &private_key, &channel_key));
+        });
     }
     group.finish();
 }
@@ -81,14 +71,14 @@ fn bench_silmarils_sign(c: &mut Criterion) {
 fn bench_silmarils_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("SILMARILS");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let private_key = derive_private_key("bench-seed");
         let public_key = derive_public_key(&private_key);
         let channel_key = demo_channel_key("bench-seed");
         let signature = sign(&message, &private_key, &channel_key);
-        
+
         group.bench_with_input(
             BenchmarkId::new("verify", size),
             &(&message, &signature, &public_key, &channel_key),
@@ -106,22 +96,18 @@ fn bench_silmarils_verify(c: &mut Criterion) {
 fn bench_ecdsa_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("ECDSA-secp256k1");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let signing_key = SigningKey::random(&mut OsRng);
-        
-        group.bench_with_input(
-            BenchmarkId::new("sign", size),
-            &message,
-            |b, msg| {
-                b.iter(|| {
-                    let digest = Sha256::digest(msg);
-                    let signature: Signature = signing_key.sign(&digest);
-                    signature
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("sign", size), &message, |b, msg| {
+            b.iter(|| {
+                let digest = Sha256::digest(msg);
+                let signature: Signature = signing_key.sign(&digest);
+                signature
+            });
+        });
     }
     group.finish();
 }
@@ -129,23 +115,21 @@ fn bench_ecdsa_sign(c: &mut Criterion) {
 fn bench_ecdsa_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("ECDSA-secp256k1");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let signing_key = SigningKey::random(&mut OsRng);
         let verifying_key = VerifyingKey::from(&signing_key);
         let digest = Sha256::digest(&message);
         let signature: Signature = signing_key.sign(&digest);
-        
-        group.bench_with_input(
-            BenchmarkId::new("verify", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    verifying_key.verify(black_box(&digest), black_box(&signature)).is_ok()
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("verify", size), size, |b, _| {
+            b.iter(|| {
+                verifying_key
+                    .verify(black_box(&digest), black_box(&signature))
+                    .is_ok()
+            });
+        });
     }
     group.finish();
 }
@@ -154,20 +138,14 @@ fn bench_ecdsa_verify(c: &mut Criterion) {
 fn bench_dilithium2_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("Dilithium2");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (_public_key, secret_key) = dilithium2_keypair();
-        
-        group.bench_with_input(
-            BenchmarkId::new("sign", size),
-            &message,
-            |b, msg| {
-                b.iter(|| {
-                    dilithium2_sign(msg, &secret_key)
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("sign", size), &message, |b, msg| {
+            b.iter(|| dilithium2_sign(msg, &secret_key));
+        });
     }
     group.finish();
 }
@@ -175,21 +153,21 @@ fn bench_dilithium2_sign(c: &mut Criterion) {
 fn bench_dilithium2_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("Dilithium2");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (public_key, secret_key) = dilithium2_keypair();
         let signature = dilithium2_sign(&message, &secret_key);
-        
-        group.bench_with_input(
-            BenchmarkId::new("verify", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    dilithium2_verify(black_box(&signature), black_box(&message), black_box(&public_key))
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("verify", size), size, |b, _| {
+            b.iter(|| {
+                dilithium2_verify(
+                    black_box(&signature),
+                    black_box(&message),
+                    black_box(&public_key),
+                )
+            });
+        });
     }
     group.finish();
 }
@@ -198,20 +176,14 @@ fn bench_dilithium2_verify(c: &mut Criterion) {
 fn bench_dilithium3_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("Dilithium3");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (_public_key, secret_key) = dilithium3_keypair();
-        
-        group.bench_with_input(
-            BenchmarkId::new("sign", size),
-            &message,
-            |b, msg| {
-                b.iter(|| {
-                    dilithium3_sign(msg, &secret_key)
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("sign", size), &message, |b, msg| {
+            b.iter(|| dilithium3_sign(msg, &secret_key));
+        });
     }
     group.finish();
 }
@@ -219,21 +191,21 @@ fn bench_dilithium3_sign(c: &mut Criterion) {
 fn bench_dilithium3_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("Dilithium3");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (public_key, secret_key) = dilithium3_keypair();
         let signature = dilithium3_sign(&message, &secret_key);
-        
-        group.bench_with_input(
-            BenchmarkId::new("verify", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    dilithium3_verify(black_box(&signature), black_box(&message), black_box(&public_key))
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("verify", size), size, |b, _| {
+            b.iter(|| {
+                dilithium3_verify(
+                    black_box(&signature),
+                    black_box(&message),
+                    black_box(&public_key),
+                )
+            });
+        });
     }
     group.finish();
 }
@@ -242,20 +214,14 @@ fn bench_dilithium3_verify(c: &mut Criterion) {
 fn bench_falcon512_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("Falcon-512");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (_public_key, secret_key) = falcon512_keypair();
-        
-        group.bench_with_input(
-            BenchmarkId::new("sign", size),
-            &message,
-            |b, msg| {
-                b.iter(|| {
-                    falcon512_sign(msg, &secret_key)
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("sign", size), &message, |b, msg| {
+            b.iter(|| falcon512_sign(msg, &secret_key));
+        });
     }
     group.finish();
 }
@@ -263,21 +229,21 @@ fn bench_falcon512_sign(c: &mut Criterion) {
 fn bench_falcon512_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("Falcon-512");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (public_key, secret_key) = falcon512_keypair();
         let signature = falcon512_sign(&message, &secret_key);
-        
-        group.bench_with_input(
-            BenchmarkId::new("verify", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    falcon512_verify(black_box(&signature), black_box(&message), black_box(&public_key))
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("verify", size), size, |b, _| {
+            b.iter(|| {
+                falcon512_verify(
+                    black_box(&signature),
+                    black_box(&message),
+                    black_box(&public_key),
+                )
+            });
+        });
     }
     group.finish();
 }
@@ -287,20 +253,14 @@ fn bench_falcon512_verify(c: &mut Criterion) {
 fn bench_sphincsplus128s_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128s");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (_public_key, secret_key) = sphincsplus128s_keypair();
-        
-        group.bench_with_input(
-            BenchmarkId::new("sign", size),
-            &message,
-            |b, msg| {
-                b.iter(|| {
-                    sphincsplus128s_sign(msg, &secret_key)
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("sign", size), &message, |b, msg| {
+            b.iter(|| sphincsplus128s_sign(msg, &secret_key));
+        });
     }
     group.finish();
 }
@@ -308,19 +268,17 @@ fn bench_sphincsplus128s_sign(c: &mut Criterion) {
 fn bench_sphincsplus128s_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128s");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (public_key, secret_key) = sphincsplus128s_keypair();
         let signature = sphincsplus128s_sign(&message, &secret_key);
-        
+
         group.bench_with_input(
             BenchmarkId::new("verify", size),
             &(&signature, &public_key),
             |b, (sig, pk)| {
-                b.iter(|| {
-                    sphincsplus128s_verify(black_box(sig), black_box(pk))
-                });
+                b.iter(|| sphincsplus128s_verify(black_box(sig), black_box(pk)));
             },
         );
     }
@@ -331,20 +289,14 @@ fn bench_sphincsplus128s_verify(c: &mut Criterion) {
 fn bench_sphincsplus128f_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128f");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (_public_key, secret_key) = sphincsplus128f_keypair();
-        
-        group.bench_with_input(
-            BenchmarkId::new("sign", size),
-            &message,
-            |b, msg| {
-                b.iter(|| {
-                    sphincsplus128f_sign(msg, &secret_key)
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("sign", size), &message, |b, msg| {
+            b.iter(|| sphincsplus128f_sign(msg, &secret_key));
+        });
     }
     group.finish();
 }
@@ -352,19 +304,17 @@ fn bench_sphincsplus128f_sign(c: &mut Criterion) {
 fn bench_sphincsplus128f_verify(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128f");
     group.sample_size(SAMPLE_SIZE);
-    
+
     for size in INPUT_SIZES.iter() {
         let message = generate_test_message(*size);
         let (public_key, secret_key) = sphincsplus128f_keypair();
         let signature = sphincsplus128f_sign(&message, &secret_key);
-        
+
         group.bench_with_input(
             BenchmarkId::new("verify", size),
             &(&signature, &public_key),
-            |b, ( sig, pk)| {
-                b.iter(|| {
-                    sphincsplus128f_verify(black_box(sig), black_box(pk))
-                });
+            |b, (sig, pk)| {
+                b.iter(|| sphincsplus128f_verify(black_box(sig), black_box(pk)));
             },
         );
     }

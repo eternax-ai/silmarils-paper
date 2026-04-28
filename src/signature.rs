@@ -1,5 +1,5 @@
-use ark_secp256k1::Fq;
 use ark_ff::{AdditiveGroup, BigInteger, PrimeField, UniformRand};
+use ark_secp256k1::Fq;
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
@@ -17,7 +17,7 @@ pub struct PublicKey {
 
 pub type PrivateKey = Fq;
 
-/// Shared secret key for the authenticated channel between signer and 
+/// Shared secret key for the authenticated channel between signer and
 /// designated verifier. In practice, derived from the TLS session key.
 pub type ChannelKey = [u8; 32];
 
@@ -33,8 +33,7 @@ pub fn derive_private_key(seed: &str) -> PrivateKey {
     // Convert seed string to bytes for RNG
     let seed_bytes: Vec<u8> = if seed.starts_with("0x") {
         // Handle hex input
-        hex::decode(&seed[2..])
-            .unwrap_or_else(|_| seed.as_bytes().to_vec())
+        hex::decode(&seed[2..]).unwrap_or_else(|_| seed.as_bytes().to_vec())
     } else {
         // Use string bytes as seed
         seed.as_bytes().to_vec()
@@ -52,7 +51,6 @@ pub fn derive_private_key(seed: &str) -> PrivateKey {
     Fq::rand(&mut rng)
 }
 
-fn derive_private_key_shares(private_key: &PrivateKey, evaluation_points: Vec<Fq>, rng: &mut impl rand::RngCore) -> (Share, Share) {
 fn sample_nonzero_fq(rng: &mut impl rand::RngCore) -> Fq {
     loop {
         let x = Fq::rand(rng);
@@ -61,6 +59,12 @@ fn sample_nonzero_fq(rng: &mut impl rand::RngCore) -> Fq {
         }
     }
 }
+
+fn derive_private_key_shares(
+    private_key: &PrivateKey,
+    evaluation_points: Vec<Fq>,
+    rng: &mut impl rand::RngCore,
+) -> (Share, Share) {
     let shares = split(*private_key, 2, 2, evaluation_points, rng);
     (shares[0].clone(), shares[1].clone())
 }
@@ -68,15 +72,16 @@ fn sample_nonzero_fq(rng: &mut impl rand::RngCore) -> Fq {
 pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
     // Derive the public key (w0, w1) from the private key with HKDF
     let private_key_bytes = private_key.into_bigint().to_bytes_be();
-    
+
     let hk = Hkdf::<Sha256>::new(Some(b"pk-params"), &private_key_bytes);
     let mut okm = [0u8; 64];
-    hk.expand(b"silmarils-public-key", &mut okm).expect("HKDF expand failed");
-    
+    hk.expand(b"silmarils-public-key", &mut okm)
+        .expect("HKDF expand failed");
+
     // Split the output into two 32-byte chunks and convert to Fq
     let w0_bytes = &okm[0..32];
     let w1_bytes = &okm[32..64];
-    
+
     let w0 = Fq::from_be_bytes_mod_order(w0_bytes);
     let w1 = Fq::from_be_bytes_mod_order(w1_bytes);
 
@@ -91,8 +96,7 @@ pub fn derive_public_key(private_key: &PrivateKey) -> PublicKey {
 /// This nonce is never transmitted and remains information-theoretically hidden
 /// from both P2 (holder) and any external adversary.
 fn compute_nonce(channel_key: &ChannelKey, message: &[u8]) -> Fq {
-    let mut mac =
-        <Hmac<Sha256>>::new_from_slice(channel_key).expect("HMAC accepts any key length");
+    let mut mac = <Hmac<Sha256>>::new_from_slice(channel_key).expect("HMAC accepts any key length");
     mac.update(b"silmarils-nonce");
     mac.update(message);
     let result = mac.finalize().into_bytes();
@@ -120,19 +124,20 @@ pub fn compute_receipt(message: &[u8], ephemeral_key: &ChannelKey) -> Fq {
 pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey) -> Signature {
     // Derive public key from private key
     let public_key = derive_public_key(private_key);
-    
+
     // r = H(M, HMAC_{k_channel}(M))
     let nonce = compute_nonce(ephemeral_key, message);
     let hash_fp = compute_receipt_hash(message, &nonce);
-    
+
     let mut rng = OsRng;
     let private_key_bytes = private_key.into_bigint().to_bytes_be();
-    let mut mac = <Hmac<Sha256>>::new_from_slice(&private_key_bytes).expect("HMAC accepts any key length");
+    let mut mac =
+        <Hmac<Sha256>>::new_from_slice(&private_key_bytes).expect("HMAC accepts any key length");
     mac.update(b"silmarils-pmk");
     mac.update(message);
     let per_message_key = mac.finalize().into_bytes();
     let per_message_key_fp = Fq::from_be_bytes_mod_order(&per_message_key);
-    
+
     let evaluation_points = vec![public_key.w0, public_key.w1];
     let key_shares =
         derive_private_key_shares(&per_message_key_fp, evaluation_points.clone(), &mut rng);
@@ -144,7 +149,6 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
     let d = sample_nonzero_fq(&mut rng);
 
     let epsilon = alpha * beta;
-    // Reuse existing RNG instead of creating new one
     let epsilon_shares = split(epsilon, 2, 2, evaluation_points, &mut rng);
 
     // σ₁ = b(K' − r), σ₂ = d·b⁻¹, σ₃ = K'₁·d, σ₄ = d·ε⁻¹·ε₁, σ₅ = d(K'₀ − r·ε⁻¹·ε₀)
@@ -164,17 +168,16 @@ pub fn sign(message: &[u8], private_key: &PrivateKey, ephemeral_key: &ChannelKey
 }
 
 /// Core verification against a precomputed r value.
-/// Rejects signatures with sigma_3 = 0 to prevent the algebraic bypass where
-/// setting sigma_3 = 0 eliminates r from the verification equation entirely,
+/// Rejects signatures with sigma_4 = 0 to prevent the algebraic bypass where
+/// setting sigma_4 = 0 eliminates r from the verification equation entirely,
 /// allowing forgery without knowledge of the channel secret.
 fn verify_inner(r: Fq, signature: &Signature, public_key: &PublicKey) -> bool {
-    if signature.sigma_3 == Fq::ZERO {
+    if signature.sigma_4 == Fq::ZERO {
         return false;
     }
 
-    let v_0 = signature.sigma_1 - signature.sigma_4;
-    let v_1 = signature.sigma_1 - signature.sigma_2
-        + r * signature.sigma_3;
+    let v_0 = signature.sigma_1 * signature.sigma_2 - signature.sigma_5;
+    let v_1 = signature.sigma_1 * signature.sigma_2 - signature.sigma_3 + r * signature.sigma_4;
 
     let v_0_share = Share {
         x: public_key.w0,
@@ -204,19 +207,15 @@ pub fn verify_designated(
 /// Third-party verification using a receipt r previously released by the designated verifier.
 /// Since the receipt is bound to a specific message via r = H(M, n_channel),
 /// it cannot be used to forge signatures for different messages.
-pub fn verify_with_receipt(
-    signature: &Signature,
-    public_key: &PublicKey,
-    receipt: Fq,
-) -> bool {
+pub fn verify_with_receipt(signature: &Signature, public_key: &PublicKey, receipt: Fq) -> bool {
     verify_inner(receipt, signature, public_key)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_secp256k1::Fq;
     use crate::shamir::{reconstruct, Share};
+    use ark_secp256k1::Fq;
     use sha2::{Digest, Sha256};
 
     const TEST_CHANNEL_KEY: ChannelKey = [0xABu8; 32];
@@ -234,8 +233,8 @@ mod tests {
         let hash = hasher.finalize();
         let r: Fq = Fq::from_be_bytes_mod_order(&hash[..]);
 
-        let v_0 = signature.sigma_1 - signature.sigma_4;
-        let v_1 = signature.sigma_1 - signature.sigma_2 + r * signature.sigma_3;
+        let v_0 = signature.sigma_1 * signature.sigma_2 - signature.sigma_5;
+        let v_1 = signature.sigma_1 * signature.sigma_2 - signature.sigma_3 + r * signature.sigma_4;
 
         let v_0_share = Share {
             x: public_key.w0,

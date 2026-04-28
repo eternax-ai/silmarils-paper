@@ -1,2 +1,2 @@
-pub mod signature;
 pub mod shamir;
+pub mod signature;

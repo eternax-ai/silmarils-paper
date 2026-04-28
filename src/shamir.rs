@@ -1,5 +1,5 @@
-use ark_secp256k1::Fq;
 use ark_ff::{AdditiveGroup, Field, UniformRand};
+use ark_secp256k1::Fq;
 use rand::RngCore;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -8,7 +8,13 @@ pub struct Share {
     pub y: Fq,
 }
 
-pub fn split(secret: Fq, threshold: usize, num_shares: usize, evaluation_points: Vec<Fq>, rng: &mut dyn RngCore) -> Vec<Share> {
+pub fn split(
+    secret: Fq,
+    threshold: usize,
+    num_shares: usize,
+    evaluation_points: Vec<Fq>,
+    rng: &mut dyn RngCore,
+) -> Vec<Share> {
     if threshold < 1 {
         panic!("Threshold must be at least 1");
     }
@@ -81,7 +87,13 @@ mod tests {
     fn test_shamir_basic() {
         let mut rng = ChaChaRng::from_seed([0u8; 32]);
         let secret = Fq::from(42u64);
-        let evaluation_points = vec![Fq::from(1u64), Fq::from(2u64), Fq::from(3u64), Fq::from(4u64), Fq::from(5u64)];
+        let evaluation_points = vec![
+            Fq::from(1u64),
+            Fq::from(2u64),
+            Fq::from(3u64),
+            Fq::from(4u64),
+            Fq::from(5u64),
+        ];
 
         let shares = split(secret, 3, 5, evaluation_points, &mut rng);
         assert_eq!(shares.len(), 5);
@@ -103,7 +115,7 @@ mod tests {
 
         let shares = split(secret, 2, 2, evaluation_points, &mut rng);
         assert_eq!(shares.len(), 2);
-        
+
         let reconstructed = reconstruct(&shares);
         assert_eq!(reconstructed, secret);
     }
@@ -112,14 +124,23 @@ mod tests {
     fn test_shamir_different_combinations() {
         let mut rng = ChaChaRng::from_seed([1u8; 32]);
         let secret = Fq::rand(&mut rng);
-        let evaluation_points = vec![Fq::from(1u64), Fq::from(2u64), Fq::from(3u64), Fq::from(4u64), Fq::from(5u64)];
+        let evaluation_points = vec![
+            Fq::from(1u64),
+            Fq::from(2u64),
+            Fq::from(3u64),
+            Fq::from(4u64),
+            Fq::from(5u64),
+        ];
 
         let shares = split(secret, 3, 5, evaluation_points, &mut rng);
 
         // Test different combinations of 3 shares
-        let reconstructed1 = reconstruct(&[shares[0].clone(), shares[1].clone(), shares[2].clone()]);
-        let reconstructed2 = reconstruct(&[shares[1].clone(), shares[3].clone(), shares[4].clone()]);
-        let reconstructed3 = reconstruct(&[shares[0].clone(), shares[2].clone(), shares[4].clone()]);
+        let reconstructed1 =
+            reconstruct(&[shares[0].clone(), shares[1].clone(), shares[2].clone()]);
+        let reconstructed2 =
+            reconstruct(&[shares[1].clone(), shares[3].clone(), shares[4].clone()]);
+        let reconstructed3 =
+            reconstruct(&[shares[0].clone(), shares[2].clone(), shares[4].clone()]);
 
         assert_eq!(reconstructed1, secret);
         assert_eq!(reconstructed2, secret);
