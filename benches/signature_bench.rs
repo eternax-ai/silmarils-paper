@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use it_sig::signature::{sign, verify_designated, derive_private_key, derive_public_key, ChannelKey};
+use silmarils_paper::signature::{sign, verify_designated, derive_private_key, derive_public_key, ChannelKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 
