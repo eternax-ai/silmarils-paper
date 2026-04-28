@@ -64,8 +64,8 @@ fn main() {
         hex::encode(public_key.w1.into_bigint().to_bytes_be())
     );
     println!(
-        "Signature: ( {}, {}, {}, {})",
-        sig.sigma_1, sig.sigma_2, sig.sigma_3, sig.sigma_4
+        "Signature: ( {}, {}, {}, {}, {})",
+        sig.sigma_1, sig.sigma_2, sig.sigma_3, sig.sigma_4, sig.sigma_5
     );
     println!("Designated-verifier check: {}", is_valid);
     println!("Invalid for wrong message [1,2,3] (should fail): {}", is_forged);
