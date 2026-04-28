@@ -2,12 +2,14 @@
 
 This directory contains benchmarks comparing SILMARILS (Information-Theoretic Signature) against several other signature schemes:
 
-- **ECDSA secp256k1** - Classical elliptic curve signature scheme
-- **Dilithium2 (ML-DSA-44)** - Post-quantum lattice-based signature
-- **Dilithium3 (ML-DSA-65)** - Higher security level variant of Dilithium
-- **Falcon-512** - Post-quantum lattice-based signature with smaller signatures
-- **SPHINCS+-128s** - Post-quantum hash-based signature (small variant)
-- **SPHINCS+-128f** - Post-quantum hash-based signature (fast variant)
+- **ECDSA secp256k1** (`k256`) — classical elliptic curve signatures
+- **Dilithium2** (`pqcrypto-dilithium::dilithium2`) — lattice-based signatures
+- **Dilithium3** (`pqcrypto-dilithium::dilithium3`) — higher-parameter Dilithium variant
+- **Falcon-512** (`pqcrypto-falcon::falcon512`) — lattice-based signatures with compact signatures
+- **SPHINCS+ SHA256 128s simple** (`pqcrypto-sphincsplus::sphincssha256128ssimple`) — hash-based signatures (small signature variant)
+- **SPHINCS+ SHA256 128f simple** (`pqcrypto-sphincsplus::sphincssha256128fsimple`) — hash-based signatures (fast signing variant)
+
+These parameter tiers align with common NIST naming for comparison only: ML-DSA-44 / ML-DSA-65 (FIPS 204), FN-DSA-512 (FIPS 206), SLH-DSA-SHA2-128s / SLH-DSA-SHA2-128f (FIPS 205). This benchmark invokes **pqclean-style APIs** from the crates above; wire formats are not necessarily identical to certified FIPS encodings.
 
 ## Running Benchmarks
 
@@ -24,8 +26,8 @@ To run a specific benchmark group:
 ```bash
 cargo bench --bench signature_bench -- SILMARILS
 cargo bench --bench signature_bench -- ECDSA-secp256k1
-cargo bench --bench signature_bench -- Dilithium2-ML-DSA-44
-cargo bench --bench signature_bench -- Dilithium3-ML-DSA-65
+cargo bench --bench signature_bench -- Dilithium2
+cargo bench --bench signature_bench -- Dilithium3
 cargo bench --bench signature_bench -- Falcon-512
 cargo bench --bench signature_bench -- SPHINCS+-128s
 cargo bench --bench signature_bench -- SPHINCS+-128f
@@ -72,52 +74,48 @@ These JSON files contain detailed statistical data including:
 - Throughput calculations
 - Raw sample measurements
 
-### Analyzing Results
+## Results snapshot (at time of publication)
 
-All analysis scripts work directly with `target/criterion/` - no copying needed:
+The tables below reproduce **fixed results** captured at the time of publication. **They are not live or CI-updated:** expect different figures if you change code, toolchain, or run on other hardware. Re-run `cargo bench` and inspect `target/criterion/` for fresh measurements.
 
-1. **Summarize results** (text summary from JSON files):
-```bash
-# Uses target/criterion by default
-python3 scripts/summarize_results.py
+**Environment (recorded run).** Apple M1 Pro (ARM64, 10 cores, 3.2 GHz performance cores), 16 GB LPDDR5, macOS 26.3 (Darwin 25.3.0). Rust `rustc 1.88.0`, `cargo 1.88.0`, release profile default optimizations (`opt-level = 3`). Criterion 0.5 with mean, standard deviation, and 95% confidence intervals, Tukey-fence outlier handling, **1,000 samples** per configuration (see `SAMPLE_SIZE` in `signature_bench.rs`). Compared schemes use the crates and modules listed [above](#signature-scheme-benchmarks).
 
-# Or specify a directory
-python3 scripts/summarize_results.py target/criterion
-```
+**Methodology.** Five message sizes (64–1024 bytes) reflecting representative blockchain payload lengths; each entry measures **sign** or **verify** only, with keys and signatures prepared outside the timed loop.
 
-2. **Generate publication-quality plots**:
-```bash
-# Install Python dependencies (recommended: use a virtual environment)
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r scripts/requirements.txt
+### Table 1 — Mean signing time (µs)
 
-# Uses target/criterion by default
-python3 scripts/plot_benchmarks.py
+| Scheme\Message Size     |    64 B |   128 B |   256 B |   512 B |  1024 B |
+|-------------------------|--------:|--------:|--------:|--------:|--------:|
+| SILMARILS               |    25.9 |    26.4 |    27.5 |    29.7 |    34.2 |
+| ECDSA-secp256k1         |    40.9 |    41.0 |    41.4 |    42.1 |    43.6 |
+| Dilithium2              |    98.8 |    64.7 |    71.6 |    76.4 |    90.9 |
+| Dilithium3              |   163.8 |   188.6 |   171.7 |   145.5 |   244.9 |
+| Falcon-512              |   152.5 |   155.2 |   153.5 |   153.8 |   155.1 |
+| SPHINCS+-128s           | 537,897 | 535,526 | 537,721 | 536,656 | 536,592 |
+| SPHINCS+-128f           |  36,121 |  35,263 |  35,300 |  35,303 |  35,381 |
 
-# Or specify a directory and output file
-python3 scripts/plot_benchmarks.py target/criterion benchmark_comparison.pdf
-```
+### Table 2 — Mean verification time (µs)
 
-This generates two types of comparison plots:
-- **Bar charts** (`benchmark_comparison.pdf/png`) - Side-by-side comparison of signing and verification times
-- **Line charts** (`benchmark_comparison_line.pdf/png`) - Line plots showing performance across message sizes
+| Scheme\Message Size     |    64 B |   128 B |   256 B |   512 B |  1024 B |
+|-------------------------|--------:|--------:|--------:|--------:|--------:|
+| SILMARILS               |     4.8 |     5.2 |     5.9 |     7.4 |    10.4 |
+| ECDSA-secp256k1         |    65.2 |    65.1 |    65.5 |    65.4 |    65.5 |
+| Dilithium2              |    21.4 |    21.7 |    22.1 |    23.1 |    25.1 |
+| Dilithium3              |    32.6 |    32.9 |    33.5 |    34.6 |    36.4 |
+| Falcon-512              |    23.4 |    23.2 |    23.8 |    24.6 |    26.3 |
+| SPHINCS+-128s           |   621.0 |   600.9 |   602.3 |   667.4 |   620.6 |
+| SPHINCS+-128f           | 1,499.6 | 1,423.8 | 1,464.5 | 1,498.2 | 1,505.4 |
 
-Both plots are suitable for inclusion in academic papers with:
-- Log scale for better visualization of wide performance ranges
-- Professional styling with clear labels and legends
-- High-resolution output (300 DPI)
-- PDF and PNG formats
-
+**Summary** SILMARILS showed the lowest signing latency in this table (about 1.2×–1.7× faster than ECDSA signing and several times faster than the lattice PQ baselines shown). Verification stayed in single-digit to low tens of µs for SILMARILS versus tens of µs for ECDSA verify in this dataset. Among PQ options, Dilithium2 and Falcon-512 had the lowest verify times here; SPHINCS+ variants had very high signing cost but moderate verify times relative to signing. Dilithium3 increased cost versus Dilithium2, consistent with a higher parameter tier.
 
 ## Dependencies
 
 The benchmarks require the following crates:
 - `criterion` - Benchmarking framework
 - `k256` - ECDSA secp256k1 implementation
-- `pqcrypto-dilithium` - Dilithium implementations
-- `pqcrypto-falcon` - Falcon implementation
-- `pqcrypto-sphincsplus` - SPHINCS+ implementations
+- `pqcrypto-dilithium` - Dilithium (`dilithium2`, `dilithium3`)
+- `pqcrypto-falcon` - Falcon (`falcon512`)
+- `pqcrypto-sphincsplus` - SPHINCS+ (`sphincssha256128ssimple`, `sphincssha256128fsimple`)
 
 All dependencies are automatically managed by Cargo.
 

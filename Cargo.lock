@@ -618,25 +618,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "it-sig"
-version = "0.1.0"
-dependencies = [
- "ark-ff",
- "ark-secp256k1",
- "criterion",
- "hex",
- "hkdf",
- "hmac",
- "k256",
- "pqcrypto-dilithium",
- "pqcrypto-falcon",
- "pqcrypto-sphincsplus",
- "rand",
- "rand_chacha",
- "sha2",
-]
-
-[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1065,6 +1046,25 @@ checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
  "digest",
  "rand_core",
+]
+
+[[package]]
+name = "silmarils-paper"
+version = "0.1.0"
+dependencies = [
+ "ark-ff",
+ "ark-secp256k1",
+ "criterion",
+ "hex",
+ "hkdf",
+ "hmac",
+ "k256",
+ "pqcrypto-dilithium",
+ "pqcrypto-falcon",
+ "pqcrypto-sphincsplus",
+ "rand",
+ "rand_chacha",
+ "sha2",
 ]
 
 [[package]]

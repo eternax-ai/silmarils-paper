@@ -4,8 +4,8 @@ mod signature;
 use ark_ff::{BigInteger, PrimeField};
 use sha2::{Digest, Sha256};
 use signature::{
-    compute_receipt, derive_private_key, derive_public_key, sign,
-    verify_designated, verify_with_receipt, ChannelKey,
+    compute_receipt, derive_private_key, derive_public_key, sign, verify_designated,
+    verify_with_receipt, ChannelKey,
 };
 use std::io::{self, Write};
 
@@ -64,15 +64,17 @@ fn main() {
         hex::encode(public_key.w1.into_bigint().to_bytes_be())
     );
     println!(
-        "Signature: ( {}, {}, {}, {})",
-        sig.sigma_1, sig.sigma_2, sig.sigma_3, sig.sigma_4
+        "Signature: ( {}, {}, {}, {}, {})",
+        sig.sigma_1, sig.sigma_2, sig.sigma_3, sig.sigma_4, sig.sigma_5
     );
     println!("Designated-verifier check: {}", is_valid);
-    println!("Invalid for wrong message [1,2,3] (should fail): {}", is_forged);
+    println!(
+        "Invalid for wrong message [1,2,3] (should fail): {}",
+        is_forged
+    );
 
     // Demonstrate receipt-based (transferable) verification
     let receipt = compute_receipt(message_input.as_bytes(), &channel_key);
     let receipt_valid = verify_with_receipt(&sig, &public_key, receipt);
     println!("Receipt-based third-party check: {}", receipt_valid);
-
 }
