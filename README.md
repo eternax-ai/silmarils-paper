@@ -24,9 +24,9 @@ Arithmetic is implemented over **secp256k1’s base field** (`ark_secp256k1::Fq`
 
 ### Message digest and receipt (matches Section 4.2 intent)
 
-- **Nonce:** `n = HMAC_{k_sig}( "silmarils-nonce" \|\| M )` (never sent on the wire in the ideal picture).
-- **Receipt field:** `r = SHA-256(M \| encode(n))` reduced into **F_p** (see `compute_receipt_hash`).
-- **Per-message signing key:** `K' = HMAC_K( "silmarils-pmk" \|\| M )` reduced into **F_p**.
+- **Nonce:** `n = HMAC_{k_sig}( "silmarils-nonce" || M )` (never sent on the wire in the ideal picture).
+- **Receipt field:** `r = SHA-256(M || encode(n))` reduced into **F_p** (see `compute_receipt_hash`).
+- **Per-message signing key:** `K' = HMAC_K( "silmarils-pmk" || M )` reduced into **F_p**.
 
 The demo binary derives a **32-byte channel key** from the user seed for convenience; in deployment this should be the pairwise secret you intend the paper’s **`k_sig`** to represent (e.g. from a TLS exporter).
 
