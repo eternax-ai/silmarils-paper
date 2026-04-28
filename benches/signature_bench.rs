@@ -150,9 +150,9 @@ fn bench_ecdsa_verify(c: &mut Criterion) {
     group.finish();
 }
 
-// Dilithium2 (ML-DSA-44) benchmarks
+// Dilithium2 — pqcrypto-dilithium::dilithium2
 fn bench_dilithium2_sign(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Dilithium2-ML-DSA-44");
+    let mut group = c.benchmark_group("Dilithium2");
     group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
@@ -173,7 +173,7 @@ fn bench_dilithium2_sign(c: &mut Criterion) {
 }
 
 fn bench_dilithium2_verify(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Dilithium2-ML-DSA-44");
+    let mut group = c.benchmark_group("Dilithium2");
     group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
@@ -194,9 +194,9 @@ fn bench_dilithium2_verify(c: &mut Criterion) {
     group.finish();
 }
 
-// Dilithium3 benchmarks
+// Dilithium3 — pqcrypto-dilithium::dilithium3
 fn bench_dilithium3_sign(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Dilithium3-ML-DSA-65");
+    let mut group = c.benchmark_group("Dilithium3");
     group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
@@ -217,7 +217,7 @@ fn bench_dilithium3_sign(c: &mut Criterion) {
 }
 
 fn bench_dilithium3_verify(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Dilithium3-ML-DSA-65");
+    let mut group = c.benchmark_group("Dilithium3");
     group.sample_size(SAMPLE_SIZE);
     
     for size in INPUT_SIZES.iter() {
@@ -238,7 +238,7 @@ fn bench_dilithium3_verify(c: &mut Criterion) {
     group.finish();
 }
 
-// Falcon-512 benchmarks
+// Falcon-512 — pqcrypto-falcon::falcon512
 fn bench_falcon512_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("Falcon-512");
     group.sample_size(SAMPLE_SIZE);
@@ -282,7 +282,7 @@ fn bench_falcon512_verify(c: &mut Criterion) {
     group.finish();
 }
 
-// SPHINCS+-128s benchmarks
+// SPHINCS+ — pqcrypto-sphincsplus::sphincssha256128ssimple
 
 fn bench_sphincsplus128s_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128s");
@@ -327,7 +327,7 @@ fn bench_sphincsplus128s_verify(c: &mut Criterion) {
     group.finish();
 }
 
-// SPHINCS+-128f benchmarks
+// SPHINCS+ — pqcrypto-sphincsplus::sphincssha256128fsimple
 fn bench_sphincsplus128f_sign(c: &mut Criterion) {
     let mut group = c.benchmark_group("SPHINCS+-128f");
     group.sample_size(SAMPLE_SIZE);
