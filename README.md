@@ -6,6 +6,8 @@ Reference Rust code for the **two-party transferable designated-verifier (TDV)**
 
 **Authors:** Hassan Khodaiemehr, Khadijeh Bagheri, Chen Feng (University of British Columbia Okanagan); Dariia Porechna (EternaX Labs).
 
+Available on [arXiv](https://arxiv.org/abs/2605.03230)
+
 This repository is cited in the paper as the open implementation for reproducing the key generation and algebraic signing/verification core.
 
 ## What SILMARILS is (in one paragraph)
